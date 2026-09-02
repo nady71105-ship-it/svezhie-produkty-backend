@@ -36,6 +36,22 @@ listingsRouter.post('/', requireTelegramAuth, async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
+// ── Мои объявления (для экрана «Профиль» в мини-аппе) ──────────────────
+// Именно /mine, а не /:id — этот маршрут объявлен раньше /:id/..., иначе
+// Express принял бы «mine» за id.
+listingsRouter.get('/mine', requireTelegramAuth, async (req, res) => {
+  const { rows } = await pool.query(
+    `select id, category_slug, title, description, price, unit, status,
+            window_start, window_end, created_at, archived_at
+     from listings
+     where seller_id = $1
+     order by created_at desc
+     limit 200`,
+    [req.user.id]
+  );
+  res.json(rows);
+});
+
 // ── Поиск / список (карта и фильтры — один и тот же эндпоинт) ─────────
 // GET /listings?lat=..&lng=..&radius_km=3&category=vegetables&topSellers=1&sort=price_asc
 listingsRouter.get('/', async (req, res) => {
