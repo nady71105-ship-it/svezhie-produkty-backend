@@ -1,6 +1,8 @@
     import 'dotenv/config';
   import express from 'express';
   import cors from 'cors';
+  import path from 'path';
+  import { fileURLToPath } from 'url';
   // Патчит Express, чтобы ошибка/отклонённый промис внутри async-обработчика
 // маршрута сама долетала до обработчика ошибок ниже, а не роняла весь
 // процесс целиком (именно так и упал сервер при первой проверке — любой
@@ -39,10 +41,27 @@ app.use('/categories', categoriesRouter);
   app.use('/reviews', reviewsRouter);
   app.use('/admin/analytics', analyticsRouter);
 
+// ── Статика мини-аппа (фронтенд, public/) ──────────────────────────────
+// Тот же самый деплой на Railway отдаёт и API, и файлы мини-аппа — не
+// нужен отдельный хостинг для фронтенда. MINIAPP_URL в .env указывает
+// сюда же (см. README).
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const publicDir = path.join(__dirname, '..', 'public');
+app.use(express.static(publicDir));
+
 // Единообразная обработка ошибок — чтобы в проде не утекал стектрейс
 app.use((err, _req, res, _next) => {
   console.error(err);
   res.status(500).json({ error: 'internal_error' });
+});
+
+// SPA-фолбэк: любой GET, не пойманный роутами/статикой выше (и не
+// начинающийся с /health, /categories, /listings, /users, /reviews,
+// /admin), отдаём index.html — навигация внутри мини-аппа своя, без
+// перезагрузки страницы.
+app.get(/^\/(?!health|categories|listings|users|reviews|admin).*/, (_req, res) => {
+  res.sendFile(path.join(publicDir, 'index.html'));
 });
 
 const port = process.env.PORT || 3000;
