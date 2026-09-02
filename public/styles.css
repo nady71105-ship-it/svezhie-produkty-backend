@@ -185,3 +185,13 @@ input,select{outline:none;}
 
 .skeleton{background:linear-gradient(90deg, var(--surface2) 25%, var(--border) 37%, var(--surface2) 63%);background-size:400% 100%;animation:sk 1.4s ease infinite;border-radius:14px;}
 @keyframes sk{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
+
+/* ── [hidden] должен побеждать ────────────────────────────────────────
+   У .screen/.app/.list/.map-empty есть свой display, и по специфичности
+   он равен встроенному правилу браузера [hidden]{display:none} — а идёт
+   позже него в каскаде, поэтому побеждает. Без этой перебивки все экраны
+   рендерились бы одновременно, друг под другом. */
+.screen[hidden],
+.app[hidden],
+.list[hidden],
+.map-empty[hidden]{display:none;}
