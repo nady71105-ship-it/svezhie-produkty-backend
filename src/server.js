@@ -1,7 +1,4 @@
-import 'dotenv/config';
-if (x) {
-    doSomething();
-import 'dotenv/config';
+    import 'dotenv/config';
   import express from 'express';
   import cors from 'cors';
   // Патчит Express, чтобы ошибка/отклонённый промис внутри async-обработчика
