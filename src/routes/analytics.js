@@ -1,4 +1,4 @@
-imimport { Router } from 'express';
+import { Router } from 'express';
 import { pool } from '../db/pool.js';
 import { requireAdmin } from '../middleware/adminAuth.js';
 
