@@ -26,6 +26,7 @@ const state = {
     origin: null,                 // {lat,lng}
     dest: null,                   // {lat,lng}
     window: null,                 // {start,end,label} (ISO строки)
+    photoDataUrl: null,           // data:image/jpeg;base64,... (уже сжатое)
   },
   sellerReviewCtx: null,          // {sellerId, listingId} — если открыли профиль продавца из карточки товара
 };
@@ -65,6 +66,48 @@ async function api(path, { method = 'GET', body, auth = false } = {}) {
     throw new Error(msg);
   }
   return data;
+}
+
+// ── Окно согласия (публикация объявления / начало переписки) ───────────
+// Текст — не наш, а с сервера (см. GET /consents/text) — так его нельзя
+// подменить на клиенте, и мы всегда показываем ровно то, что реально
+// сохранится в журнале согласий при подтверждении.
+function askConsent(context) {
+  return new Promise((resolve) => {
+    const overlay = $('#consentModal');
+    const textEl = $('#consentText');
+    const confirmBtn = $('#consentConfirm');
+    const cancelBtn = $('#consentCancel');
+
+    textEl.textContent = 'Загрузка…';
+    overlay.hidden = false;
+    api(`/consents/text?context=${encodeURIComponent(context)}`)
+      .then((res) => { textEl.textContent = res.text; })
+      .catch(() => { textEl.textContent = 'Не удалось загрузить текст согласия. Проверьте связь и попробуйте ещё раз.'; });
+
+    function cleanup(result) {
+      overlay.hidden = true;
+      confirmBtn.removeEventListener('click', onConfirm);
+      cancelBtn.removeEventListener('click', onCancel);
+      resolve(result);
+    }
+    function onConfirm() { cleanup(true); }
+    function onCancel() { cleanup(false); }
+    confirmBtn.addEventListener('click', onConfirm);
+    cancelBtn.addEventListener('click', onCancel);
+  });
+}
+
+// Пишем факт согласия в журнал на сервере (см. src/routes/consents.js —
+// там же и объяснение, зачем это нужно). Если запись технически не
+// удалась, действие всё равно не блокируем — это была бы слишком жёсткая
+// расплата пользователя за наш сбой, — но честно предупреждаем тостом.
+async function recordConsent(context, listingId) {
+  try {
+    await api('/consents', { method: 'POST', auth: true, body: { context, listing_id: listingId || undefined } });
+  } catch (e) {
+    showToast('Не удалось сохранить подтверждение согласия — попробуйте ещё раз позже');
+  }
 }
 
 // ── Навигация между экранами ──────────────────────────────────────────
@@ -153,6 +196,9 @@ $$('.segment .opt').forEach((opt) => {
     $('#mapView').hidden = state.view !== 'map';
     $('#listView').hidden = state.view !== 'list';
     closeSheet();
+    // Пока карта была display:none, Leaflet не мог измерить контейнер —
+    // без этого после переключения обратно на «Карту» тайлы съезжают.
+    if (state.view === 'map' && leafletMap) setTimeout(() => leafletMap.invalidateSize(), 0);
   });
 });
 
@@ -167,7 +213,10 @@ function locateMe(refresh) {
     (pos) => {
       state.userLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
       $('#locLabel').textContent = 'Ваше местоположение';
-      if (refresh) loadHome();
+      if (refresh) {
+        loadHome();
+        if (leafletMap) leafletMap.flyTo([state.userLoc.lat, state.userLoc.lng], 13, { duration: 1 });
+      }
     },
     () => {
       showToast('Не удалось определить местоположение — показываем без геопривязки');
@@ -196,56 +245,156 @@ async function loadHome() {
   }
 
   state.listingsById = new Map(listings.map((l) => [String(l.id), l]));
-  renderMap(listings);
+  renderMapMarkers(listings);
   renderList(listings);
 }
 
-// Простая проекция координат объявления на декоративную карту: центр —
-// либо геолокация пользователя, либо центр тяжести самих объявлений.
-function project(listings) {
-  let centerLat, centerLng;
-  if (state.userLoc) {
-    centerLat = state.userLoc.lat; centerLng = state.userLoc.lng;
-  } else if (listings.length) {
-    centerLat = listings.reduce((s, l) => s + l.dest_lat, 0) / listings.length;
-    centerLng = listings.reduce((s, l) => s + l.dest_lng, 0) / listings.length;
-  } else {
-    return () => ({ x: 50, y: 50 });
-  }
-  const kmPerDegLat = 111;
-  const kmPerDegLng = 111 * Math.cos((centerLat * Math.PI) / 180);
-  const spanKm = Math.max(state.filters.radius_km, 1.5);
-  return (lat, lng) => {
-    const dxKm = (lng - centerLng) * kmPerDegLng;
-    const dyKm = (lat - centerLat) * kmPerDegLat;
-    let x = 50 + (dxKm / spanKm) * 40;
-    let y = 50 - (dyKm / spanKm) * 40;
-    x = Math.min(92, Math.max(8, x));
-    y = Math.min(90, Math.max(10, y));
-    return { x, y };
-  };
+// ── Настоящая интерактивная карта (Leaflet + OpenStreetMap) ────────────
+// Свободные тайлы без ключа — удобно для теста и небольшой аудитории.
+// Если/когда аудитория вырастет, стоит перейти на платного провайдера
+// тайлов (Яндекс.Карты, 2ГИС, MapTiler) — see README.
+const MOSCOW_CENTER = [55.7558, 37.6176];
+let leafletMap = null;
+let markerLayer = null;
+let selectedMarker = null;
+
+function initMap() {
+  if (leafletMap) return;
+  leafletMap = L.map('leafletMap', { zoomControl: false }).setView(MOSCOW_CENTER, 10);
+  L.control.zoom({ position: 'bottomright' }).addTo(leafletMap);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap',
+  }).addTo(leafletMap);
+  markerLayer = L.layerGroup().addTo(leafletMap);
+  leafletMap.on('click', () => closeSheet());
 }
 
-function renderMap(listings) {
-  const layer = $('#pinsLayer');
-  layer.innerHTML = '';
+function renderMapMarkers(listings) {
   $('#mapEmpty').hidden = listings.length > 0;
-  const toXY = project(listings);
+  if (!leafletMap) return;
+  markerLayer.clearLayers();
+  selectedMarker = null;
 
   listings.forEach((l) => {
-    const { x, y } = toXY(l.dest_lat, l.dest_lng);
+    if (l.dest_lat == null || l.dest_lng == null) return;
     const meta = CATEGORY_META[l.category_slug] || CATEGORY_META.other;
-    const pin = el('button', 'pin');
-    pin.style.left = `${x}%`;
-    pin.style.top = `${y}%`;
-    pin.dataset.id = l.id;
-    pin.innerHTML = `
-      <div class="badge" style="background:${meta.bg}">${categoryIcon(l.category_slug)}</div>
-      <div class="price">${formatPrice(l.price)} ₽/${l.unit}</div>
-    `;
-    pin.addEventListener('click', () => openSheet(l));
-    layer.appendChild(pin);
+    const marker = L.marker([l.dest_lat, l.dest_lng], {
+      icon: L.divIcon({
+        className: 'leaflet-pin-wrap',
+        html: `<div class="leaflet-pin"><div class="badge" style="background:${meta.bg}">${categoryIcon(l.category_slug)}</div><div class="price">${formatPrice(l.price)} ₽/${l.unit}</div></div>`,
+        iconSize: [60, 60],
+        iconAnchor: [30, 48],
+      }),
+    });
+    marker.addTo(markerLayer);
+    marker.on('click', (e) => {
+      L.DomEvent.stopPropagation(e);
+      selectMarker(marker);
+      openSheet(l);
+    });
   });
+}
+
+function selectMarker(marker) {
+  if (selectedMarker) selectedMarker.getElement()?.querySelector('.leaflet-pin')?.classList.remove('selected');
+  selectedMarker = marker;
+  marker?.getElement()?.querySelector('.leaflet-pin')?.classList.add('selected');
+}
+
+// ── Поиск по адресу/метро (геокодер Nominatim/OpenStreetMap) ───────────
+$('#btnMapSearch').addEventListener('click', () => {
+  $('#mapSearchPanel').hidden = false;
+  $('#mapSearchInput').focus();
+});
+$('#mapSearchCancel').addEventListener('click', () => { $('#mapSearchPanel').hidden = true; });
+$('#mapSearchGo').addEventListener('click', doMapSearch);
+$('#mapSearchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') doMapSearch(); });
+
+async function doMapSearch() {
+  const q = $('#mapSearchInput').value.trim();
+  if (!q || !leafletMap) return;
+  const btn = $('#mapSearchGo');
+  btn.disabled = true;
+  try {
+    // viewbox грубо ограничивает Москву и область — чтобы «Сокольники» не
+    // нашлись где-нибудь в другом городе.
+    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=ru&viewbox=36.4,56.4,38.8,55.0&bounded=1&q=${encodeURIComponent(q + ', Москва')}`;
+    const res = await fetch(url, { headers: { 'Accept-Language': 'ru' } });
+    const results = await res.json();
+    if (!results.length) {
+      showToast('Не нашли такое место — попробуйте сформулировать иначе');
+      return;
+    }
+    leafletMap.flyTo([Number(results[0].lat), Number(results[0].lon)], 14, { duration: 1.1 });
+    $('#mapSearchPanel').hidden = true;
+    $('#mapSearchInput').value = '';
+  } catch (e) {
+    showToast('Не удалось найти адрес — проверьте связь');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ── Едущие машинки — декоративная анимация «продукты едут в Москву» ────
+// Спавнятся у случайного края видимой области карты и едут к случайному
+// товару (или к центру карты, если товаров нет), доехав — исчезают.
+const CAR_EMOJIS = ['🚐', '🚚', '🚗'];
+let activeCars = [];
+
+function randomEdgePoint(bounds) {
+  const n = bounds.getNorth(), s = bounds.getSouth(), e = bounds.getEast(), w = bounds.getWest();
+  const side = Math.floor(Math.random() * 4);
+  if (side === 0) return { lat: n, lng: w + Math.random() * (e - w) };
+  if (side === 1) return { lat: s, lng: w + Math.random() * (e - w) };
+  if (side === 2) return { lat: s + Math.random() * (n - s), lng: w };
+  return { lat: s + Math.random() * (n - s), lng: e };
+}
+
+function pickCarTarget() {
+  const listings = Array.from(state.listingsById.values()).filter((l) => l.dest_lat != null);
+  if (listings.length) {
+    const l = listings[Math.floor(Math.random() * listings.length)];
+    return { lat: l.dest_lat, lng: l.dest_lng };
+  }
+  const c = leafletMap.getCenter();
+  return { lat: c.lat, lng: c.lng };
+}
+
+function spawnCar() {
+  if (!leafletMap || document.hidden || $('#screen-home').hidden || $('#mapView').hidden) return;
+  if (activeCars.length >= 3) return;
+
+  const bounds = leafletMap.getBounds();
+  const start = randomEdgePoint(bounds);
+  const target = pickCarTarget();
+  const emoji = CAR_EMOJIS[Math.floor(Math.random() * CAR_EMOJIS.length)];
+  const car = L.marker([start.lat, start.lng], {
+    icon: L.divIcon({ className: 'car-pin-wrap', html: `<div class="car-pin">${emoji}</div>`, iconSize: [24, 24] }),
+    interactive: false,
+    keyboard: false,
+    zIndexOffset: -200,
+  }).addTo(leafletMap);
+  activeCars.push(car);
+
+  const durationMs = 7000 + Math.random() * 5000;
+  const t0 = performance.now();
+  function step(now) {
+    const t = Math.min(1, (now - t0) / durationMs);
+    car.setLatLng([start.lat + (target.lat - start.lat) * t, start.lng + (target.lng - start.lng) * t]);
+    if (t < 1) {
+      requestAnimationFrame(step);
+    } else {
+      leafletMap.removeLayer(car);
+      activeCars = activeCars.filter((c) => c !== car);
+    }
+  }
+  requestAnimationFrame(step);
+}
+
+function startCarAnimation() {
+  spawnCar();
+  setInterval(spawnCar, 3500);
 }
 
 function renderList(listings) {
@@ -273,7 +422,6 @@ function renderList(listings) {
 }
 
 function openSheet(listing) {
-  $$('.pin').forEach((p) => p.classList.toggle('selected', p.dataset.id === String(listing.id)));
   const sheet = $('#sheet');
   const meta = CATEGORY_META[listing.category_slug] || CATEGORY_META.other;
   sheet.innerHTML = `
@@ -299,7 +447,10 @@ function openSheet(listing) {
 }
 function closeSheet() {
   $('#sheet').hidden = true;
-  $$('.pin.selected').forEach((p) => p.classList.remove('selected'));
+  if (selectedMarker) {
+    selectedMarker.getElement()?.querySelector('.leaflet-pin')?.classList.remove('selected');
+    selectedMarker = null;
+  }
 }
 
 // ── Экран «Карточка товара» ───────────────────────────────────────────
@@ -313,7 +464,10 @@ function renderDetail(l) {
   const meta = CATEGORY_META[l.category_slug] || CATEGORY_META.other;
   const body = $('#detailBody');
   body.innerHTML = `
-    <div class="detail-hero" style="background:${meta.bg}">${categoryIcon(l.category_slug)}</div>
+    <div class="detail-hero" style="background:${meta.bg}">
+      ${categoryIcon(l.category_slug)}
+      <img src="/listings/${l.id}/photo" alt="" onerror="this.remove()">
+    </div>
     <div>
       <div class="detail-title">${escapeHtml(l.title)}</div>
       <div class="detail-price">${formatPrice(l.price)} ₽ / ${escapeHtml(l.unit)}</div>
@@ -341,6 +495,9 @@ function renderDetail(l) {
 
 async function contactSeller(listingId) {
   if (!initData) { showToast('Откройте мини-приложение через бота в Telegram'); return; }
+  const agreed = await askConsent('contact_seller');
+  if (!agreed) return;
+  await recordConsent('contact_seller', listingId);
   try {
     const res = await api(`/listings/${listingId}/contact-click`, { method: 'POST', auth: true });
     if (res.contactAvailable && res.telegramLink) {
@@ -526,6 +683,71 @@ function pickGeo(kind) {
 $('#btnOrigin').addEventListener('click', () => pickGeo('origin'));
 $('#btnDest').addEventListener('click', () => pickGeo('dest'));
 
+// ── Фото урожая (необязательно) ──────────────────────────────────────
+// Сжимаем прямо на клиенте через canvas, прежде чем отправлять —
+// присланное с телефона фото 4000×3000 иначе разнесло бы и запрос, и базу.
+$('#btnPickPhoto').addEventListener('click', () => $('#fPhoto').click());
+$('#btnRemovePhoto').addEventListener('click', () => {
+  state.create.photoDataUrl = null;
+  $('#photoPreviewWrap').hidden = true;
+  $('#btnPickPhoto').hidden = false;
+});
+$('#fPhoto').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  try {
+    const dataUrl = await resizeImageToDataUrl(file, 1280, 0.75);
+    state.create.photoDataUrl = dataUrl;
+    $('#photoPreview').src = dataUrl;
+    $('#photoPreviewWrap').hidden = false;
+    $('#btnPickPhoto').hidden = true;
+  } catch (err) {
+    showToast('Не удалось обработать фото — попробуйте другое');
+  }
+});
+
+function resizeImageToDataUrl(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error);
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const scale = maxDim / Math.max(width, height);
+          width = Math.round(width * scale);
+          height = Math.round(height * scale);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve(canvas.toDataURL('image/jpeg', quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function resetCreateForm() {
+  $('#fTitle').value = '';
+  $('#fDescription').value = '';
+  $('#fPrice').value = '';
+  $('#originVal').textContent = 'не указано';
+  $('#destVal').textContent = 'не указано';
+  $('#photoPreviewWrap').hidden = true;
+  $('#btnPickPhoto').hidden = false;
+  state.create.origin = null;
+  state.create.dest = null;
+  state.create.window = null;
+  state.create.photoDataUrl = null;
+  renderTimeChips();
+}
+
 $('#btnPublish').addEventListener('click', async () => {
   if (!initData) { showToast('Откройте мини-приложение через бота в Telegram'); return; }
   const errEl = $('#createError');
@@ -535,7 +757,7 @@ $('#btnPublish').addEventListener('click', async () => {
   const description = $('#fDescription').value.trim();
   const price = Number($('#fPrice').value);
   const unit = $('#fUnit').value;
-  const { category, origin, dest, window: win } = state.create;
+  const { category, origin, dest, window: win, photoDataUrl } = state.create;
 
   if (!category || !title || !price || !unit || !origin || !dest || !win) {
     errEl.textContent = 'Заполните название, цену, обе точки на маршруте и время выезда';
@@ -543,9 +765,12 @@ $('#btnPublish').addEventListener('click', async () => {
     return;
   }
 
+  const agreed = await askConsent('create_listing');
+  if (!agreed) return;
+
   $('#btnPublish').disabled = true;
   try {
-    await api('/listings', {
+    const created = await api('/listings', {
       method: 'POST',
       auth: true,
       body: {
@@ -559,18 +784,12 @@ $('#btnPublish').addEventListener('click', async () => {
         dest_radius_m: 1500,
         window_start: win.start,
         window_end: win.end,
+        photo_data_url: photoDataUrl || undefined,
       },
     });
+    recordConsent('create_listing', created.id);
     showToast('Объявление опубликовано!');
-    $('#fTitle').value = '';
-    $('#fDescription').value = '';
-    $('#fPrice').value = '';
-    $('#originVal').textContent = 'не указано';
-    $('#destVal').textContent = 'не указано';
-    state.create.origin = null;
-    state.create.dest = null;
-    state.create.window = null;
-    renderTimeChips();
+    resetCreateForm();
     state.screenStack = ['home'];
     showScreen('home', { push: false });
     loadHome();
@@ -721,6 +940,13 @@ async function boot() {
 
   $('#splash').style.display = 'none';
   $('#app').hidden = false;
+
+  // Карту создаём только теперь: пока #app скрыт (display:none), контейнер
+  // имеет нулевой размер, и Leaflet посчитал бы себя нерабочим 0×0.
+  initMap();
+  renderMapMarkers(Array.from(state.listingsById.values()));
+  leafletMap.invalidateSize();
+  startCarAnimation();
 
   if (!initData) {
     showToast('Вы открыли страницу вне Telegram — часть функций (создание объявлений, профиль) будет недоступна');

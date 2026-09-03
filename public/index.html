@@ -5,6 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>Свежие продукты</title>
 <link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
@@ -53,14 +55,20 @@
     <div class="filterrow" id="filterRow"></div>
 
     <div id="mapView" class="mapwrap">
-      <svg viewBox="0 0 358 500" width="100%" height="100%" preserveAspectRatio="xMidYMid slice" class="mapbg">
-        <rect width="358" height="500" fill="oklch(93% 0.03 95)"/>
-        <path d="M-10 60 Q120 20 180 90 T380 70" stroke="oklch(88% 0.02 90)" stroke-width="24" fill="none"/>
-        <path d="M-10 330 Q140 270 200 350 T380 310" stroke="oklch(88% 0.02 90)" stroke-width="18" fill="none"/>
-        <ellipse cx="118" cy="175" rx="145" ry="112" fill="oklch(84% 0.09 145)"/>
-        <ellipse cx="272" cy="392" rx="92" ry="72" fill="oklch(80% 0.07 220)"/>
-      </svg>
-      <div id="pinsLayer" class="pins-layer"></div>
+      <div id="leafletMap" class="leaflet-fill"></div>
+
+      <button id="btnMapSearch" class="map-search-btn">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+        Метро или адрес
+      </button>
+      <div id="mapSearchPanel" class="map-search-panel" hidden>
+        <input id="mapSearchInput" class="field" placeholder="Например: Сокольники">
+        <div style="display:flex;gap:8px;margin-top:8px;">
+          <button type="button" class="btn-primary" id="mapSearchGo" style="flex:1;height:40px;">Найти</button>
+          <button type="button" class="btn-secondary" id="mapSearchCancel" style="flex:1;height:40px;">Отмена</button>
+        </div>
+      </div>
+
       <div id="mapEmpty" class="map-empty" hidden>Пока ничего не найдено рядом — попробуйте увеличить радиус или снять фильтры</div>
     </div>
 
@@ -98,6 +106,23 @@
       <div>
         <div class="label">Категория</div>
         <div class="chiprow" id="createCategories"></div>
+      </div>
+
+      <div>
+        <div class="label">Фото урожая (необязательно)</div>
+        <input type="file" accept="image/*" id="fPhoto" hidden>
+        <div class="photo-picker" id="photoPicker">
+          <button type="button" class="photo-picker-btn" id="btnPickPhoto">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M4 8a2 2 0 0 1 2-2h1.2l.9-1.5a1 1 0 0 1 .86-.5h6.08a1 1 0 0 1 .86.5L16.8 6H18a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/><circle cx="12" cy="13" r="3.4" stroke="currentColor" stroke-width="1.8"/></svg>
+            Добавить фото
+          </button>
+          <div class="photo-preview-wrap" id="photoPreviewWrap" hidden>
+            <img class="photo-preview" id="photoPreview" alt="">
+            <button type="button" class="photo-remove" id="btnRemovePhoto">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none"><path d="M6 6l12 12M18 6L6 18" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>
+            </button>
+          </div>
+        </div>
       </div>
 
       <div>
@@ -188,6 +213,17 @@
   </div>
 
   <div id="toast" class="toast" hidden></div>
+
+  <div id="consentModal" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <div class="modal-title" id="consentTitle">Подтверждение</div>
+      <div class="modal-text" id="consentText"></div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="consentCancel">Отмена</button>
+        <button type="button" class="btn-primary" id="consentConfirm">Да, подтверждаю</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script type="module" src="./app.js"></script>

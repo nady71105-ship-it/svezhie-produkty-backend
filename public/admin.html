@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Свежие продукты — админка</title>
+<style>
+  :root{
+    --brand: oklch(58% 0.19 29);
+    --brand-dark: oklch(45% 0.15 29);
+    --bg: oklch(97% 0.018 90);
+    --surface: oklch(99% 0.01 90);
+    --border: oklch(90% 0.015 90);
+    --ink: oklch(28% 0.03 60);
+    --ink-soft: oklch(45% 0.02 60);
+    --ink-mute: oklch(60% 0.02 60);
+    --green: oklch(58% 0.13 145);
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:'Manrope',system-ui,sans-serif;padding:20px 16px 60px;}
+  h1{font-size:20px;margin:0 0 4px;}
+  .sub{color:var(--ink-soft);font-size:13px;margin-bottom:20px;}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:16px;margin-bottom:16px;}
+  .gate{max-width:360px;margin:60px auto;text-align:center;}
+  .gate input{width:100%;padding:11px 13px;border-radius:12px;border:1.5px solid var(--border);font-size:14px;margin:12px 0;}
+  button{cursor:pointer;border:none;border-radius:12px;padding:10px 16px;font-weight:700;font-size:13.5px;background:var(--brand);color:#fff;}
+  button.secondary{background:var(--surface);color:var(--ink);border:1.5px solid var(--border);}
+  button:disabled{opacity:.5;cursor:default;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin-bottom:16px;}
+  .stat{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:14px;text-align:center;}
+  .stat .num{font-size:22px;font-weight:800;}
+  .stat .label{font-size:11.5px;color:var(--ink-soft);margin-top:2px;}
+  h2{font-size:14px;text-transform:uppercase;letter-spacing:.03em;color:var(--ink-soft);margin:0 0 10px;}
+  .funnel{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+  .funnel .step{background:var(--bg);border-radius:12px;padding:10px 14px;text-align:center;min-width:90px;}
+  .funnel .step b{display:block;font-size:18px;}
+  .funnel .arrow{color:var(--ink-mute);}
+  .bar-row{display:grid;grid-template-columns:110px 1fr 40px;align-items:center;gap:8px;font-size:13px;margin-bottom:6px;}
+  .bar-track{background:var(--bg);border-radius:8px;height:14px;overflow:hidden;}
+  .bar-fill{background:var(--brand);height:100%;border-radius:8px;}
+  table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:160px;}
+  th{color:var(--ink-soft);font-weight:700;font-size:11px;text-transform:uppercase;}
+  .toolbar{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;gap:8px;flex-wrap:wrap;}
+  .err{color:oklch(50% 0.18 25);font-size:13px;}
+  .tablewrap{overflow-x:auto;}
+  a.logout{font-size:12px;color:var(--ink-mute);text-decoration:underline;cursor:pointer;}
+</style>
+</head>
+<body>
+
+<div id="gate" class="gate card">
+  <h1>Свежие продукты</h1>
+  <div class="sub">Введите админ-токен (тот, что в переменной ADMIN_TOKEN на Railway)</div>
+  <input id="tokenInput" type="password" placeholder="Админ-токен" autocomplete="off">
+  <button id="btnEnter">Войти</button>
+  <div id="gateErr" class="err" style="margin-top:10px;"></div>
+</div>
+
+<div id="dash" hidden>
+  <div class="toolbar">
+    <div>
+      <h1>Аналитика</h1>
+      <div class="sub">Свежие продукты — только по своей базе, без сторонней аналитики</div>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;">
+      <button class="secondary" id="btnRefresh">Обновить</button>
+      <a class="logout" id="btnLogout">выйти</a>
+    </div>
+  </div>
+
+  <div class="grid" id="statsGrid"></div>
+
+  <div class="card">
+    <h2>Воронка за 30 дней</h2>
+    <div class="funnel" id="funnel"></div>
+  </div>
+
+  <div class="card">
+    <h2>Спрос по категориям за 7 дней</h2>
+    <div id="categoryBars"></div>
+  </div>
+
+  <div class="card">
+    <div class="toolbar" style="margin-bottom:14px;">
+      <h2 style="margin:0;">Журнал согласий (последние 100)</h2>
+      <button id="btnExport">Скачать CSV (полный)</button>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Когда</th><th>Кто</th><th>Тип</th><th>Объявление</th><th>IP</th></tr></thead>
+        <tbody id="consentsBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const CONTEXT_LABEL = { create_listing: 'публикация объявления', contact_seller: 'начало переписки' };
+
+function getToken() { return sessionStorage.getItem('adminToken') || ''; }
+function setToken(t) { sessionStorage.setItem('adminToken', t); }
+
+async function api(path) {
+  const res = await fetch(path, { headers: { 'x-admin-token': getToken() } });
+  if (res.status === 401) { sessionStorage.removeItem('adminToken'); showGate('Неверный токен'); throw new Error('unauthorized'); }
+  if (!res.ok) throw new Error('Ошибка запроса (' + res.status + ')');
+  return res.json();
+}
+
+function showGate(err) {
+  document.getElementById('gate').hidden = false;
+  document.getElementById('dash').hidden = true;
+  document.getElementById('gateErr').textContent = err || '';
+}
+function showDash() {
+  document.getElementById('gate').hidden = true;
+  document.getElementById('dash').hidden = false;
+}
+
+function fmtDate(iso) {
+  return new Date(iso).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+async function loadAll() {
+  try {
+    const [summary, consents] = await Promise.all([
+      api('/admin/analytics/summary'),
+      api('/admin/analytics/consents?limit=100'),
+    ]);
+    renderSummary(summary);
+    renderConsents(consents);
+    showDash();
+  } catch (e) {
+    if (e.message !== 'unauthorized') showGate(e.message);
+  }
+}
+
+function renderSummary(s) {
+  const grid = document.getElementById('statsGrid');
+  const tiles = [
+    ['Сделок за неделю', s.dealsThisWeek],
+    ['Новых продавцов', s.newSellersThisWeek],
+    ['Жалоб за неделю', s.reportsThisWeek],
+    ['Автоархивировано', s.autoArchivedThisWeek],
+    ['Повторные покупатели', Math.round((s.repeatBuyerRatio || 0) * 100) + '%'],
+  ];
+  grid.innerHTML = tiles.map(([label, num]) =>
+    `<div class="stat"><div class="num">${num}</div><div class="label">${label}</div></div>`
+  ).join('');
+
+  const f = s.funnel || {};
+  document.getElementById('funnel').innerHTML = `
+    <div class="step"><b>${f.opened || 0}</b>объявлений открыто</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>${f.contacted || 0}</b>написали продавцу</div>
+    <div class="arrow">→</div>
+    <div class="step"><b>${f.closed || 0}</b>закрыто отзывом</div>
+  `;
+
+  const cats = s.categoryDemand || [];
+  const max = Math.max(1, ...cats.map((c) => Number(c.cnt)));
+  document.getElementById('categoryBars').innerHTML = cats.length
+    ? cats.map((c) => `
+        <div class="bar-row">
+          <span>${c.category_slug}</span>
+          <div class="bar-track"><div class="bar-fill" style="width:${(Number(c.cnt) / max) * 100}%"></div></div>
+          <span>${c.cnt}</span>
+        </div>`).join('')
+    : '<div class="sub">За неделю новых объявлений не было</div>';
+}
+
+function renderConsents(rows) {
+  const body = document.getElementById('consentsBody');
+  body.innerHTML = rows.length ? rows.map((r) => `
+    <tr>
+      <td>${fmtDate(r.created_at)}</td>
+      <td>${r.first_name || ''}${r.username ? ' @' + r.username : ''} (${r.telegram_id})</td>
+      <td>${CONTEXT_LABEL[r.context] || r.context}</td>
+      <td>${r.listing_id ? r.listing_id.slice(0, 8) + '…' : '—'}</td>
+      <td>${r.ip_address || '—'}</td>
+    </tr>
+  `).join('') : '<tr><td colspan="5" class="sub">Пока пусто</td></tr>';
+}
+
+document.getElementById('btnEnter').addEventListener('click', () => {
+  const t = document.getElementById('tokenInput').value.trim();
+  if (!t) return;
+  setToken(t);
+  loadAll();
+});
+document.getElementById('tokenInput').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') document.getElementById('btnEnter').click();
+});
+document.getElementById('btnRefresh').addEventListener('click', loadAll);
+document.getElementById('btnLogout').addEventListener('click', () => {
+  sessionStorage.removeItem('adminToken');
+  showGate('');
+});
+document.getElementById('btnExport').addEventListener('click', async (e) => {
+  const btn = e.currentTarget;
+  btn.disabled = true;
+  try {
+    const res = await fetch('/admin/analytics/consents/export', { headers: { 'x-admin-token': getToken() } });
+    if (!res.ok) throw new Error('Ошибка экспорта (' + res.status + ')');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'consents.csv';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+if (getToken()) loadAll(); else showGate('');
+</script>
+</body>
+</html>
