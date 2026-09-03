@@ -47,6 +47,10 @@
       </button>
     </div>
 
+    <div class="home-hint" id="homeHint"></div>
+
+    <div class="home-counter" id="homeCounter"></div>
+
     <div class="segment">
       <div class="opt active" data-view="map">Карта</div>
       <div class="opt" data-view="list">Список</div>
@@ -135,7 +139,7 @@
         <input class="field" id="fDescription" placeholder="Сорт, размер, как забрать..." maxlength="300">
       </div>
 
-      <div class="row2">
+      <div class="row2" id="priceRow">
         <div>
           <div class="label">Цена, ₽</div>
           <input class="field" id="fPrice" type="number" inputmode="decimal" min="1" placeholder="250">
@@ -150,6 +154,21 @@
             <option value="десяток">за десяток</option>
           </select>
         </div>
+      </div>
+
+      <label class="giveaway-toggle" id="giveawayToggle">
+        <input type="checkbox" id="fGiveaway">
+        <span class="giveaway-box"></span>
+        <span>
+          <span class="giveaway-title">🎁 Отдам даром</span>
+          <span class="giveaway-hint">Излишки урожая, которые жалко выбрасывать — без цены</span>
+        </span>
+      </label>
+      <div class="giveaway-phrases" id="giveawayPhrases" hidden>
+        <button type="button" class="phrase-chip" data-phrase="Даром — забирайте!">Даром</button>
+        <button type="button" class="phrase-chip" data-phrase="Угостим бесплатно, только заберите сами">Угостим бесплатно</button>
+        <button type="button" class="phrase-chip" data-phrase="Приезжайте, заберите хоть за шоколадку">За шоколадку</button>
+        <button type="button" class="phrase-chip" data-phrase="Отдам в добрые руки">В добрые руки</button>
       </div>
 
       <div class="routecard">
@@ -180,20 +199,23 @@
           </div>
         </div>
 
-        <div class="timechips" id="timeChips"></div>
-        <button type="button" class="custom-time-btn" id="btnCustomTime">+ Своё время</button>
-        <div class="custom-time-form" id="customTimeForm" hidden>
-          <div class="row2">
-            <div>
-              <div class="label" style="margin-bottom:4px;">С</div>
-              <input type="datetime-local" class="field" id="customTimeStart">
+        <div class="time-section" id="timeSection">
+          <div class="timechips" id="timeChips"></div>
+          <button type="button" class="custom-time-btn" id="btnCustomTime">+ Своё время</button>
+          <div class="custom-time-form" id="customTimeForm" hidden>
+            <div class="row2">
+              <div>
+                <div class="label" style="margin-bottom:4px;">С</div>
+                <input type="datetime-local" class="field" id="customTimeStart">
+              </div>
+              <div>
+                <div class="label" style="margin-bottom:4px;">До</div>
+                <input type="datetime-local" class="field" id="customTimeEnd">
+              </div>
             </div>
-            <div>
-              <div class="label" style="margin-bottom:4px;">До</div>
-              <input type="datetime-local" class="field" id="customTimeEnd">
-            </div>
+            <div class="custom-time-preview" id="customTimePreview"></div>
+            <button type="button" class="btn-secondary" id="btnCustomTimeApply" style="margin-top:8px;">Применить</button>
           </div>
-          <button type="button" class="btn-secondary" id="btnCustomTimeApply" style="margin-top:8px;">Применить</button>
         </div>
       </div>
 
@@ -239,6 +261,23 @@
   </div>
 
   <div id="toast" class="toast" hidden></div>
+
+  <div id="balloonToast" class="balloon-toast" hidden>
+    <div class="balloon-drag" id="balloonDrag">
+      <div class="balloon-shape">🎈</div>
+      <div class="balloon-msg" id="balloonMsg"></div>
+    </div>
+  </div>
+
+  <div id="termsGate" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <div class="modal-title">Добро пожаловать 🌿</div>
+      <div class="modal-text" id="termsText">Загрузка…</div>
+      <div class="modal-actions">
+        <button type="button" class="btn-primary" id="termsAccept">Принимаю и продолжаю</button>
+      </div>
+    </div>
+  </div>
 
   <div id="consentModal" class="modal-overlay" hidden>
     <div class="modal-card">

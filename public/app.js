@@ -25,11 +25,14 @@ const state = {
     category: null,
     origin: null,                 // {lat,lng}
     dest: null,                   // {lat,lng}
-    originLabel: null,            // текст адреса/метро, который ввели
+    originLabel: null,            // краткая подпись адреса/метро (для отображения)
     destLabel: null,
     window: null,                 // {start,end,label} (ISO строки)
     photoDataUrl: null,           // data:image/jpeg;base64,... (уже сжатое)
+    giveaway: false,              // «отдам даром» — цена необязательна
+    photoNudged: false,           // шарик-подсказку про фото показываем один раз за сессию формы
   },
+  meAccepted: null,               // null пока не проверено, иначе boolean — принял ли пользователь условия
   sellerReviewCtx: null,          // {sellerId, listingId} — если открыли профиль продавца из карточки товара
 };
 
@@ -51,6 +54,80 @@ function showToast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => { t.hidden = true; }, 2600);
 }
+
+// Подсвечивает/снимает подсветку с конкретного обязательного поля —
+// красим только то, чего реально не хватает, а не форму целиком.
+function markInvalid(elOrWrap, invalid = true) {
+  if (!elOrWrap) return;
+  elOrWrap.classList.toggle('field-invalid', invalid);
+  elOrWrap.classList.toggle('invalid', invalid);
+}
+function clearFieldErrors() {
+  ['#fTitle', '#fPrice', '#originInput', '#destInput'].forEach((sel) => markInvalid($(sel), false));
+  markInvalid($('#timeSection'), false);
+}
+
+// ── Шарик-подсказка: всплывает, медленно улетает вверх, свайпается ─────
+// Используем и для «вот чего не хватает», и для дружеского напоминания про
+// фото — вместо того чтобы прятать это в обычный тост.
+function showBalloon(text) {
+  const outer = $('#balloonToast');
+  const inner = $('#balloonDrag');
+  $('#balloonMsg').textContent = text;
+  if (outer._anim) outer._anim.cancel();
+  clearTimeout(outer._hideTimer);
+  inner.style.transform = '';
+  outer.classList.add('balloon-active');
+  outer.hidden = false;
+  const anim = outer.animate([
+    { bottom: '100px', opacity: 0 },
+    { bottom: '150px', opacity: 1, offset: 0.1 },
+    { bottom: '520px', opacity: 1, offset: 0.82 },
+    { bottom: '620px', opacity: 0 },
+  ], { duration: 5200, easing: 'ease-in', fill: 'forwards' });
+  outer._anim = anim;
+  anim.onfinish = () => {
+    outer.hidden = true;
+    outer.classList.remove('balloon-active');
+  };
+}
+function dismissBalloon(dir) {
+  const outer = $('#balloonToast');
+  const inner = $('#balloonDrag');
+  if (outer._anim) outer._anim.pause();
+  inner.animate(
+    [{ transform: inner.style.transform || 'translateX(0px) rotate(0deg)' }, { transform: `translateX(${dir * 320}px) rotate(${dir * 34}deg)` }],
+    { duration: 260, easing: 'ease-in', fill: 'forwards' }
+  ).onfinish = () => {
+    outer.hidden = true;
+    outer.classList.remove('balloon-active');
+    inner.style.transform = '';
+    if (outer._anim) outer._anim.cancel();
+  };
+}
+(function setupBalloonSwipe() {
+  const inner = $('#balloonDrag');
+  let dragging = false, startX = 0, dx = 0;
+  inner.addEventListener('pointerdown', (e) => {
+    dragging = true; startX = e.clientX; dx = 0;
+    inner.style.cursor = 'grabbing';
+    inner.setPointerCapture(e.pointerId);
+  });
+  inner.addEventListener('pointermove', (e) => {
+    if (!dragging) return;
+    dx = e.clientX - startX;
+    inner.style.transform = `translateX(${dx}px) rotate(${dx / 10}deg)`;
+  });
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    inner.style.cursor = 'grab';
+    if (Math.abs(dx) > 60) dismissBalloon(dx > 0 ? 1 : -1);
+    else inner.style.transform = '';
+  }
+  inner.addEventListener('pointerup', endDrag);
+  inner.addEventListener('pointercancel', endDrag);
+})();
 
 // ── API ─────────────────────────────────────────────────────────────────
 async function api(path, { method = 'GET', body, auth = false } = {}) {
@@ -110,6 +187,44 @@ async function recordConsent(context, listingId) {
   } catch (e) {
     showToast('Не удалось сохранить подтверждение согласия — попробуйте ещё раз позже');
   }
+}
+
+// ── Мини-регистрация: разовое пользовательское соглашение ──────────────
+// Показываем один раз — при первом заходе в мини-апп через Telegram
+// (без initData проверить/показать всё равно нечем). Принятие фиксируется
+// и в журнале согласий (тот же механизм, что и для create_listing /
+// contact_seller — см. consents.js), и отдельной отметкой на пользователе
+// (users.terms_accepted_at), чтобы не спрашивать заново на каждой сессии.
+async function checkTermsGate() {
+  if (!initData) return;
+  try {
+    const me = await api('/users/me', { auth: true });
+    state.me = me;
+    if (me.terms_accepted_at) return;
+  } catch (e) {
+    return; // не смогли проверить — не блокируем работу приложения
+  }
+
+  const overlay = $('#termsGate');
+  const textEl = $('#termsText');
+  textEl.textContent = 'Загрузка…';
+  overlay.hidden = false;
+  try {
+    const res = await api('/consents/text?context=terms_of_use');
+    textEl.textContent = res.text;
+  } catch (e) {
+    textEl.textContent = 'Не удалось загрузить текст соглашения. Проверьте связь и попробуйте ещё раз.';
+  }
+
+  $('#termsAccept').addEventListener('click', async function onAccept() {
+    $('#termsAccept').removeEventListener('click', onAccept);
+    try {
+      await api('/consents', { method: 'POST', auth: true, body: { context: 'terms_of_use' } });
+      overlay.hidden = true;
+    } catch (e) {
+      showToast('Не удалось сохранить согласие — проверьте связь и попробуйте ещё раз');
+    }
+  });
 }
 
 // ── Навигация между экранами ──────────────────────────────────────────
@@ -198,6 +313,27 @@ function renderFilterRow() {
     loadHome();
   });
   row.appendChild(sortChip);
+}
+
+// ── Маркетинговые подсказки над картой — для покупателя и для продавца,
+// чередуются, чтобы обе поместились в одну строчку и не отвлекали. ─────
+const HOME_HINTS = [
+  '🛒 Выбери продукт — и на карте сразу загорится ближайшее место, где его можно забрать',
+  '🌾 Есть урожай? Закинь его на карту — и привези свой урожай соседу!',
+];
+function startHomeHints() {
+  const hintEl = $('#homeHint');
+  let i = 0;
+  const show = () => { hintEl.style.opacity = '0'; setTimeout(() => { hintEl.textContent = HOME_HINTS[i % HOME_HINTS.length]; hintEl.style.opacity = '1'; i++; }, 220); };
+  show();
+  setInterval(show, 6000);
+}
+
+// ── Счётчик «сколько уже перевезли соседям» — пока условные цифры для
+// примера (см. обсуждение с Надей), потом заменим на реальную агрегацию
+// по факту доставленных объявлений. ─────────────────────────────────────
+function renderHomeCounter() {
+  $('#homeCounter').innerHTML = '📦 За сезон соседям передано уже <b>≈1&nbsp;240 кг</b> и <b>≈340 л</b> свежих продуктов';
 }
 
 $$('.segment .opt').forEach((opt) => {
@@ -305,7 +441,7 @@ function renderMapMarkers(listings) {
     const marker = L.marker([l.dest_lat, l.dest_lng], {
       icon: L.divIcon({
         className: 'leaflet-pin-wrap',
-        html: `<div class="leaflet-pin"><div class="badge" style="background:${meta.bg}">${categoryIcon(l.category_slug)}</div><div class="price">${formatPrice(l.price)} ₽/${l.unit}</div></div>`,
+        html: `<div class="leaflet-pin"><div class="badge" style="background:${meta.bg}">${categoryIcon(l.category_slug)}</div><div class="price${Number(l.price) === 0 ? ' price-free' : ''}">${Number(l.price) === 0 ? 'ДАРОМ' : `${formatPrice(l.price)} ₽/${l.unit}`}</div></div>`,
         iconSize: [60, 60],
         iconAnchor: [30, 48],
       }),
@@ -331,11 +467,36 @@ function selectMarker(marker) {
 // автоподстановки геолокации устройства без явного выбора пользователя.
 async function nominatimSearch(query) {
   // viewbox грубо ограничивает Москву и область — чтобы «Сокольники» не
-  // нашлись где-нибудь в другом городе.
-  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=ru&viewbox=36.4,56.4,38.8,55.0&bounded=1&q=${encodeURIComponent(query + ', Москва')}`;
+  // нашлись где-нибудь в другом городе. addressdetails=1 — чтобы можно было
+  // собрать короткую подпись (см. shortLocationLabel) вместо длинного
+  // «Раменское, ... , Центральный федеральный округ, 140100, Россия».
+  const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&limit=5&countrycodes=ru&viewbox=36.4,56.4,38.8,55.0&bounded=1&q=${encodeURIComponent(query + ', Москва')}`;
   const res = await fetch(url, { headers: { 'Accept-Language': 'ru' } });
   const results = await res.json();
-  return results.map((r) => ({ lat: Number(r.lat), lng: Number(r.lon), label: r.display_name }));
+  return results.map((r) => ({
+    lat: Number(r.lat),
+    lng: Number(r.lon),
+    label: shortLocationLabel(r),
+    fullLabel: r.display_name,
+  }));
+}
+
+// Из подробного ответа Nominatim собираем короткую подпись — станцию метро
+// («метро Сокольники») или ближайший населённый пункт/район («Солнечногорск»,
+// «Раменское») — вместо полного адреса со страной, округом и индексом.
+function shortLocationLabel(r) {
+  const a = r.address || {};
+  const isStation = r.class === 'railway' || r.class === 'public_transport' || a.station;
+  if (isStation) {
+    const stationName = a.station || (r.display_name || '').split(',')[0].trim();
+    return `метро ${stationName}`;
+  }
+  const short = a.village || a.town || a.city || a.suburb || a.city_district
+    || a.municipality || a.county || (r.display_name || '').split(',')[0].trim();
+  // Если нашли конкретную улицу/дом, а не просто населённый пункт — подпись
+  // всё равно оставляем короткой (сам населённый пункт), этого достаточно,
+  // чтобы понять, откуда/куда, не перегружая карточку адресом целиком.
+  return short || (r.display_name || '').split(',')[0].trim();
 }
 
 // Вешает на текстовое поле живой автокомплит с выпадающим списком.
@@ -428,7 +589,24 @@ attachAddressAutocomplete($('#mapSearchInput'), $('#mapSearchSuggest'), {
 // ── Едущие машинки — декоративная анимация «продукты едут в Москву» ────
 // Спавнятся у случайного края видимой области карты и едут к случайному
 // товару (или к центру карты, если товаров нет), доехав — исчезают.
-const CAR_EMOJIS = ['🚐', '🚚', '🚗'];
+// Один и тот же грузовичок (силуэт), но в четырёх цветах — без маршрутки.
+const CAR_COLORS = [
+  'oklch(58% 0.19 29)',   // красный
+  'oklch(55% 0.15 250)',  // синий
+  'oklch(58% 0.15 145)',  // зелёный
+  'oklch(80% 0.16 95)',   // жёлтый
+];
+function truckIconHtml(color) {
+  return `<svg width="36" height="24" viewBox="0 0 36 24" xmlns="http://www.w3.org/2000/svg">
+    <rect x="1" y="6" width="20" height="11" rx="2.2" fill="${color}"/>
+    <path d="M21 9.5h6.4c.55 0 1.06.28 1.36.74L31 14v3.3H21V9.5Z" fill="${color}"/>
+    <rect x="24.5" y="11.2" width="4.4" height="3.2" rx="0.6" fill="oklch(93% 0.02 220)"/>
+    <circle cx="8.5" cy="19" r="3.3" fill="oklch(22% 0.02 60)"/>
+    <circle cx="8.5" cy="19" r="1.4" fill="oklch(90% 0.01 90)"/>
+    <circle cx="26.5" cy="19" r="3.3" fill="oklch(22% 0.02 60)"/>
+    <circle cx="26.5" cy="19" r="1.4" fill="oklch(90% 0.01 90)"/>
+  </svg>`;
+}
 let activeCars = [];
 
 function randomEdgePoint(bounds) {
@@ -462,9 +640,9 @@ function spawnCar() {
   const bounds = leafletMap.getBounds();
   const start = randomEdgePoint(bounds);
   const target = pickCarTarget();
-  const emoji = CAR_EMOJIS[Math.floor(Math.random() * CAR_EMOJIS.length)];
+  const color = CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)];
   const car = L.marker([start.lat, start.lng], {
-    icon: L.divIcon({ className: 'car-pin-wrap', html: `<div class="car-pin">${emoji}</div>`, iconSize: [24, 24] }),
+    icon: L.divIcon({ className: 'car-pin-wrap', html: `<div class="car-pin">${truckIconHtml(color)}</div>`, iconSize: [36, 24] }),
     interactive: false,
     keyboard: false,
     zIndexOffset: -200,
@@ -511,7 +689,7 @@ function renderList(listings) {
       <div class="ithumb" style="background:${meta.bg}">${categoryIcon(l.category_slug)}</div>
       <div>
         <div class="ititle">${escapeHtml(l.title)}</div>
-        <div class="iprice">${formatPrice(l.price)} ₽ / ${escapeHtml(l.unit)}</div>
+        <div class="iprice${Number(l.price) === 0 ? ' price-free' : ''}">${priceLabel(l.price, l.unit)}</div>
         <div class="imeta">${escapeHtml(l.seller_name || 'Продавец')} · ${formatWindow(l.window_start, l.window_end)}</div>
         <div class="irating">★ ${Number(l.seller_rating || 0).toFixed(1)} · ${l.seller_deals || 0} сделок</div>
       </div>
@@ -535,7 +713,7 @@ function openSheet(listing) {
       <div class="thumb" style="background:${meta.bg}">${categoryIcon(listing.category_slug)}</div>
       <div>
         <div class="ctitle">${escapeHtml(listing.title)}</div>
-        <div class="cmeta">${formatPrice(listing.price)} ₽ / ${escapeHtml(listing.unit)} · ${formatWindow(listing.window_start, listing.window_end)}</div>
+        <div class="cmeta">${priceLabel(listing.price, listing.unit)} · ${formatWindow(listing.window_start, listing.window_end)}</div>
       </div>
     </div>
     <div class="seller">★ ${Number(listing.seller_rating || 0).toFixed(1)} · ${escapeHtml(listing.seller_name || 'Продавец')} · ${listing.seller_deals || 0} сделок</div>
@@ -570,7 +748,7 @@ function renderDetail(l) {
     </div>
     <div>
       <div class="detail-title">${escapeHtml(l.title)}</div>
-      <div class="detail-price">${formatPrice(l.price)} ₽ / ${escapeHtml(l.unit)}</div>
+      <div class="detail-price${Number(l.price) === 0 ? ' price-free' : ''}">${priceLabel(l.price, l.unit)}</div>
     </div>
     ${l.description ? `<div class="detail-desc">${escapeHtml(l.description)}</div>` : ''}
     <div class="detail-row">
@@ -732,6 +910,23 @@ function renderCreateCategories() {
   });
 }
 
+// ── «Отдам даром» — излишки урожая без цены ─────────────────────────────
+$('#fGiveaway').addEventListener('change', (e) => {
+  state.create.giveaway = e.target.checked;
+  $('#priceRow').hidden = e.target.checked;
+  $('#giveawayPhrases').hidden = !e.target.checked;
+  if (e.target.checked) {
+    $('#fPrice').value = '';
+    markInvalid($('#fPrice'), false);
+  }
+});
+$$('.phrase-chip').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const desc = $('#fDescription');
+    desc.value = btn.dataset.phrase;
+  });
+});
+
 function daySlot(dayOffset, fromHour, toHour, label) {
   const now = new Date();
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() + dayOffset, fromHour, 0, 0);
@@ -764,6 +959,20 @@ function renderTimeChips() {
     });
     row.appendChild(chip);
   });
+  // Своё время показываем не голой меткой «Своё время», а красиво
+  // отформатированным диапазоном — тем же способом, что и в карточке.
+  if (state.create.window && state.create.window.label === 'Своё время') {
+    const w = state.create.window;
+    const chip = el('button', 'timechip active timechip-custom', `🗓 ${formatWindow(w.start, w.end)}`);
+    chip.addEventListener('click', () => {
+      $('#customTimeForm').hidden = false;
+      $('#customTimeStart').value = toLocalInputValue(new Date(w.start));
+      $('#customTimeEnd').value = toLocalInputValue(new Date(w.end));
+      $('#customTimeEnd').min = $('#customTimeStart').value;
+      updateCustomTimePreview();
+    });
+    row.appendChild(chip);
+  }
 }
 
 // Точки маршрута — теперь только через поиск метро/адреса (живые
@@ -791,6 +1000,24 @@ function toLocalInputValue(d) {
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+// Красивая живая подпись диапазона под самими инпутами — раньше выбранное
+// время было видно только внутри нативного datetime-инпута (и то при
+// клике на него), теперь показываем текстом сразу.
+function formatRangePretty(start, end) {
+  const day = start.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  const dayEnd = end.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  const t = (d) => d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
+  if (day === dayEnd) return `${day}, ${t(start)}–${t(end)}`;
+  return `${day} ${t(start)} – ${dayEnd} ${t(end)}`;
+}
+function updateCustomTimePreview() {
+  const sVal = $('#customTimeStart').value;
+  const eVal = $('#customTimeEnd').value;
+  const preview = $('#customTimePreview');
+  if (!sVal || !eVal) { preview.textContent = ''; return; }
+  preview.textContent = `🗓 ${formatRangePretty(new Date(sVal), new Date(eVal))}`;
+}
+
 $('#btnCustomTime').addEventListener('click', () => {
   const form = $('#customTimeForm');
   form.hidden = !form.hidden;
@@ -800,8 +1027,25 @@ $('#btnCustomTime').addEventListener('click', () => {
     const end = new Date(now.getTime() + 4 * 60 * 60 * 1000);
     $('#customTimeStart').value = toLocalInputValue(start);
     $('#customTimeEnd').value = toLocalInputValue(end);
+    $('#customTimeEnd').min = $('#customTimeStart').value;
+    updateCustomTimePreview();
   }
 });
+// Поле «До» не должно позволять выбрать время раньше, чем в «С» — и если
+// сдвигаем «С» вперёд, «До» подтягивается следом, а не остаётся в прошлом.
+$('#customTimeStart').addEventListener('input', () => {
+  const sVal = $('#customTimeStart').value;
+  if (!sVal) return;
+  $('#customTimeEnd').min = sVal;
+  const start = new Date(sVal);
+  const eVal = $('#customTimeEnd').value;
+  if (!eVal || new Date(eVal) <= start) {
+    $('#customTimeEnd').value = toLocalInputValue(new Date(start.getTime() + 3 * 60 * 60 * 1000));
+  }
+  updateCustomTimePreview();
+});
+$('#customTimeEnd').addEventListener('input', updateCustomTimePreview);
+
 $('#btnCustomTimeApply').addEventListener('click', () => {
   const sVal = $('#customTimeStart').value;
   const eVal = $('#customTimeEnd').value;
@@ -809,6 +1053,7 @@ $('#btnCustomTimeApply').addEventListener('click', () => {
   const start = new Date(sVal), end = new Date(eVal);
   if (end <= start) { showToast('Время «до» должно быть позже времени «с»'); return; }
   state.create.window = { label: 'Своё время', start: start.toISOString(), end: end.toISOString() };
+  markInvalid($('#timeSection'), false);
   renderTimeChips();
   $('#customTimeForm').hidden = true;
   showToast('Время выезда указано');
@@ -875,12 +1120,19 @@ function resetCreateForm() {
   $('#customTimeForm').hidden = true;
   $('#customTimeStart').value = '';
   $('#customTimeEnd').value = '';
+  $('#customTimePreview').textContent = '';
+  $('#fGiveaway').checked = false;
+  $('#priceRow').hidden = false;
+  $('#giveawayPhrases').hidden = true;
   state.create.origin = null;
   state.create.dest = null;
   state.create.originLabel = null;
   state.create.destLabel = null;
   state.create.window = null;
   state.create.photoDataUrl = null;
+  state.create.giveaway = false;
+  state.create.photoNudged = false;
+  clearFieldErrors();
   renderTimeChips();
 }
 
@@ -888,16 +1140,37 @@ $('#btnPublish').addEventListener('click', async () => {
   if (!initData) { showToast('Откройте мини-приложение через бота в Telegram'); return; }
   const errEl = $('#createError');
   errEl.hidden = true;
+  clearFieldErrors();
 
   const title = $('#fTitle').value.trim();
   const description = $('#fDescription').value.trim();
-  const price = Number($('#fPrice').value);
+  const price = state.create.giveaway ? 0 : Number($('#fPrice').value);
   const unit = $('#fUnit').value;
-  const { category, origin, dest, window: win, photoDataUrl } = state.create;
+  const { category, origin, dest, window: win, photoDataUrl, giveaway } = state.create;
 
-  if (!category || !title || !price || !unit || !origin || !dest || !win) {
-    errEl.textContent = 'Заполните название, цену, обе точки на маршруте и время выезда';
+  // Подсвечиваем ТОЛЬКО реально незаполненные обязательные поля — не форму
+  // целиком, — и в сообщении перечисляем именно их, а не общую фразу.
+  const missing = [];
+  if (!title) { missing.push('название'); markInvalid($('#fTitle')); }
+  if (!giveaway && !(price > 0)) { missing.push('цену (или отметьте «Отдам даром»)'); markInvalid($('#fPrice')); }
+  if (!origin) { missing.push('точку «откуда»'); markInvalid($('#originInput')); }
+  if (!dest) { missing.push('точку «куда»'); markInvalid($('#destInput')); }
+  if (!win) { missing.push('время выезда'); markInvalid($('#timeSection')); }
+
+  if (missing.length || !category) {
+    const msg = category ? `Заполните: ${missing.join(', ')}` : 'Заполните название, цену, обе точки на маршруте и время выезда';
+    errEl.textContent = msg;
     errEl.hidden = false;
+    showBalloon(missing.length === 1 ? `Не хватает: ${missing[0]}` : msg);
+    return;
+  }
+
+  // Мягкая разовая подсказка про фото — не блокирует публикацию, просто
+  // напоминает один раз за визит на этот экран, что с фото товар охотнее
+  // и быстрее покупают. Повторное нажатие «Опубликовать» публикует как есть.
+  if (!photoDataUrl && !state.create.photoNudged) {
+    state.create.photoNudged = true;
+    showBalloon('📸 Добавьте фото — так товар покупают охотнее и быстрее!');
     return;
   }
 
@@ -957,8 +1230,10 @@ $('#btnPublish').addEventListener('click', async () => {
 function renderPublishedCard(l) {
   const meta = CATEGORY_META[l.category_slug] || CATEGORY_META.other;
   const body = $('#publishedBody');
+  // По умолчанию — иконка категории на цветном фоне; если приложили фото,
+  // оно просто перекрывает иконку (см. .detail-hero img { position:absolute }).
   const photoHtml = l.photoDataUrl ? `<img src="${l.photoDataUrl}" alt="">` : '';
-  const routeText = [l.originLabel, l.destLabel].filter(Boolean).join(' → ');
+  const hasRoute = l.originLabel || l.destLabel;
   body.innerHTML = `
     <div class="published-badge">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M7.5 12.5l3 3 6-6.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -970,17 +1245,24 @@ function renderPublishedCard(l) {
     </div>
     <div>
       <div class="detail-title">${escapeHtml(l.title)}</div>
-      <div class="detail-price">${formatPrice(l.price)} ₽ / ${escapeHtml(l.unit)}</div>
+      <div class="detail-price${Number(l.price) === 0 ? ' price-free' : ''}">${priceLabel(l.price, l.unit)}</div>
     </div>
-    ${l.description ? `<div class="detail-desc">${escapeHtml(l.description)}</div>` : ''}
-    <div class="detail-row">
+    ${l.description ? `<div class="published-desc">${escapeHtml(l.description)}</div>` : ''}
+    <div class="published-row detail-row">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M8 3v4M16 3v4M3 10h18" stroke="currentColor" stroke-width="1.8"/></svg>
       ${formatWindow(l.window_start, l.window_end)}
     </div>
-    ${routeText ? `
-      <div class="detail-row">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 22s7-7.4 7-12.6A7 7 0 0 0 5 9.4C5 14.6 12 22 12 22Z" stroke="currentColor" stroke-width="1.8"/></svg>
-        ${escapeHtml(routeText)}
+    ${hasRoute ? `
+      <div class="route-viz">
+        <div class="route-line">
+          <span class="route-house">🏠</span>
+          <span class="route-truck">${truckIconHtml(CAR_COLORS[0])}</span>
+          <span class="route-pin">📍</span>
+        </div>
+        <div class="route-labels">
+          <span>🏠 ${escapeHtml(l.originLabel || '—')}</span>
+          <span>${escapeHtml(l.destLabel || '—')} 📍</span>
+        </div>
       </div>` : ''}
     <button class="btn-primary" id="publishedDone">На главную</button>
   `;
@@ -1069,7 +1351,7 @@ function renderProfile(me, mine) {
       <div class="mylisting-top">
         <div>
           <div style="font-weight:800;font-size:14px;">${escapeHtml(l.title)}</div>
-          <div style="font-size:12px;color:var(--ink-soft);margin-top:2px;">${formatPrice(l.price)} ₽ / ${escapeHtml(l.unit)} · ${formatWindow(l.window_start, l.window_end)}</div>
+          <div style="font-size:12px;color:var(--ink-soft);margin-top:2px;">${priceLabel(l.price, l.unit)} · ${formatWindow(l.window_start, l.window_end)}</div>
         </div>
         <span class="status-badge ${statusCls}">${STATUS_LABEL[l.status] || l.status}</span>
       </div>
@@ -1091,6 +1373,11 @@ function renderProfile(me, mine) {
 // ── Форматирование ────────────────────────────────────────────────────
 function formatPrice(p) {
   return Number(p).toLocaleString('ru-RU');
+}
+// «Отдам даром» хранится как цена 0 — вместо «0 ₽» показываем бейдж.
+function priceLabel(price, unit) {
+  if (Number(price) === 0) return 'ДАРОМ';
+  return `${formatPrice(price)} ₽ / ${escapeHtml(unit)}`;
 }
 function formatDate(iso) {
   return new Date(iso).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
@@ -1124,11 +1411,14 @@ async function boot() {
     showToast('Не удалось загрузить категории — проверьте связь');
   }
   renderFilterRow();
+  renderHomeCounter();
+  startHomeHints();
   locateMe(false);
   await loadHome();
 
   $('#splash').style.display = 'none';
   $('#app').hidden = false;
+  checkTermsGate();
 
   // Карту создаём только теперь: пока #app скрыт (display:none), контейнер
   // имеет нулевой размер, и Leaflet посчитал бы себя нерабочим 0×0.

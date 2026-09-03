@@ -62,6 +62,11 @@ input,select{outline:none;}
 .segment .opt{flex:1;text-align:center;padding:9px 0;border-radius:11px;font-weight:700;font-size:14px;color:var(--ink-soft);}
 .segment .opt.active{background:var(--surface);color:var(--ink);box-shadow:0 2px 6px oklch(30% 0.02 90 / 0.14);}
 
+/* ── Маркетинговые подсказки сверху главной ────────────────────────────── */
+.home-hint{margin:0 18px 8px;padding:11px 14px;background:linear-gradient(135deg, oklch(92% 0.06 145), oklch(94% 0.06 95));border-radius:14px;font-size:12.5px;font-weight:700;color:oklch(32% 0.08 145);line-height:1.4;flex-shrink:0;transition:opacity .35s;}
+.home-counter{margin:0 18px 10px;padding:9px 14px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;font-size:12px;font-weight:700;color:var(--ink-soft);flex-shrink:0;display:flex;align-items:center;gap:6px;}
+.home-counter b{color:var(--brand-dark);font-weight:800;}
+
 .filterrow{display:flex;gap:8px;padding:0 18px 10px;overflow-x:auto;flex-shrink:0;scrollbar-width:none;}
 .filterrow::-webkit-scrollbar{display:none;}
 .fchip{display:flex;align-items:center;gap:6px;padding:8px 12px;border-radius:12px;background:var(--surface);border:1.5px solid var(--border);font-weight:700;font-size:12.5px;color:var(--ink-soft);white-space:nowrap;flex-shrink:0;}
@@ -77,10 +82,12 @@ input,select{outline:none;}
 .leaflet-pin{display:flex;flex-direction:column;align-items:center;gap:5px;}
 .leaflet-pin .badge{width:44px;height:44px;border-radius:50%;background:oklch(99% 0.01 90 / 0.96);display:flex;align-items:center;justify-content:center;box-shadow:0 5px 12px oklch(25% 0.02 90 / 0.22);padding:8px;transition:outline-color .15s;}
 .leaflet-pin .price{font-size:10.5px;font-weight:800;background:oklch(22% 0.03 60);color:oklch(98% 0 0);padding:3px 8px;border-radius:10px;white-space:nowrap;}
+.leaflet-pin .price.price-free,.price-free{background:var(--green) !important;color:white !important;}
+.iprice.price-free,.detail-price.price-free{color:oklch(42% 0.13 145);}
 .leaflet-pin.selected .badge{outline:2.5px solid var(--brand);}
 
 /* Едущие машинки — декоративный слой, показывает «продукты едут в Москву» */
-.car-pin{font-size:22px;line-height:1;filter:drop-shadow(0 2px 4px oklch(20% 0.05 40 / .35));}
+.car-pin{display:flex;filter:drop-shadow(0 2px 4px oklch(20% 0.05 40 / .35));}
 
 /* Кнопка и панель поиска по адресу/метро поверх карты */
 .map-search-btn{position:absolute;left:12px;top:12px;z-index:420;display:flex;align-items:center;gap:6px;background:oklch(99% 0.01 90 / 0.96);color:var(--ink);border-radius:12px;padding:9px 13px;font-weight:700;font-size:12.5px;box-shadow:0 4px 14px oklch(25% 0.02 90 / 0.18);}
@@ -118,6 +125,27 @@ input,select{outline:none;}
 .field::placeholder{color:oklch(66% 0.008 90);font-weight:400;}
 .row2{display:flex;gap:10px;}
 .row2 > div{flex:1;}
+
+/* ── Подсветка незаполненных обязательных полей ───────────────────────
+   Красим ТОЛЬКО те поля, которых реально не хватает — не всё сразу. */
+.field.field-invalid,
+.geo-input.field-invalid{border-color:oklch(58% 0.19 25);box-shadow:0 0 0 3px oklch(58% 0.19 25 / 0.12);}
+.time-section.invalid{outline:2px solid oklch(58% 0.19 25);outline-offset:5px;border-radius:14px;}
+
+/* ── Отдать даром — переключатель под ценой ───────────────────────────── */
+.giveaway-toggle{display:flex;align-items:flex-start;gap:10px;background:var(--surface);border:1.5px solid var(--border);border-radius:14px;padding:11px 13px;cursor:pointer;}
+.giveaway-toggle input{position:absolute;opacity:0;width:0;height:0;}
+.giveaway-box{width:20px;height:20px;border-radius:7px;border:2px solid oklch(75% 0.06 145);flex-shrink:0;margin-top:1px;position:relative;transition:background .15s,border-color .15s;}
+.giveaway-toggle input:checked ~ .giveaway-box{background:var(--green);border-color:var(--green);}
+.giveaway-toggle input:checked ~ .giveaway-box::after{content:'';position:absolute;left:6px;top:2px;width:5px;height:10px;border:solid white;border-width:0 2.4px 2.4px 0;transform:rotate(40deg);}
+.giveaway-title{font-weight:800;font-size:13px;display:block;}
+.giveaway-hint{font-size:11.5px;color:var(--ink-soft);display:block;margin-top:1px;}
+.giveaway-phrases{display:flex;flex-wrap:wrap;gap:7px;}
+.phrase-chip{padding:7px 11px;border-radius:11px;background:oklch(92% 0.05 145);color:oklch(35% 0.09 145);font-weight:700;font-size:12px;}
+
+/* ── Своё время: красивый предпросмотр вместо голого datetime-инпута ──── */
+.custom-time-preview{margin-top:8px;font-size:12.5px;font-weight:700;color:oklch(35% 0.09 145);}
+.timechip-custom{display:flex;align-items:center;gap:4px;}
 
 .chiprow{display:flex;flex-wrap:wrap;gap:7px;}
 .chip{display:flex;align-items:center;gap:6px;padding:7px 11px;border-radius:11px;background:var(--surface);border:1.5px solid var(--border);font-weight:700;font-size:12px;color:var(--ink-soft);}
@@ -158,6 +186,22 @@ input,select{outline:none;}
 
 /* ── Экран «Объявление опубликовано» ───────────────────────────────── */
 .published-badge{display:flex;align-items:center;gap:8px;background:oklch(90% 0.09 145);color:oklch(30% 0.1 145);font-weight:800;font-size:13px;padding:11px 14px;border-radius:14px;}
+.published-desc{font-size:13.5px;color:var(--ink);font-weight:600;line-height:1.5;}
+.published-row{font-size:13px;color:var(--ink-soft);font-weight:600;}
+
+/* Маршрут: домик → анимированный грузовичок → булавка. Линия внизу той же
+   серой подписью коротко пишет, откуда и куда (короткие адреса — см.
+   shortLocationLabel в app.js). */
+.route-viz{background:var(--surface);border-radius:16px;padding:14px 12px 12px;}
+.route-line{position:relative;display:flex;align-items:center;justify-content:space-between;height:26px;}
+.route-line::before{content:'';position:absolute;left:14px;right:14px;top:50%;height:2px;background:repeating-linear-gradient(90deg, oklch(70% 0.06 145) 0 6px, transparent 6px 12px);transform:translateY(-50%);}
+.route-house,.route-pin{font-size:19px;z-index:1;}
+.route-truck{position:absolute;top:50%;left:14px;transform:translate(0,-50%);animation:routeDrive 3.6s ease-in-out infinite alternate;filter:drop-shadow(0 2px 3px oklch(20% 0.05 40 / .3));}
+.route-truck svg{display:block;width:26px;height:auto;}
+@keyframes routeDrive{from{left:14px;}to{left:calc(100% - 34px);}}
+.route-labels{display:flex;justify-content:space-between;gap:10px;margin-top:8px;font-size:11.5px;font-weight:700;color:var(--ink-soft);}
+.route-labels span{display:flex;align-items:center;gap:4px;min-width:0;}
+.route-labels span:last-child{text-align:right;flex-direction:row-reverse;}
 
 /* ── Detail screen ──────────────────────────────────────────────────── */
 .detail-hero{width:100%;height:120px;border-radius:18px;display:flex;align-items:center;justify-content:center;}
@@ -216,6 +260,13 @@ input,select{outline:none;}
 /* ── Toast ──────────────────────────────────────────────────────────── */
 .toast{position:absolute;left:18px;right:18px;bottom:88px;background:oklch(22% 0.03 60);color:white;font-weight:700;font-size:13px;padding:12px 16px;border-radius:14px;text-align:center;box-shadow:0 8px 20px oklch(20% 0.02 60 / 0.3);z-index:50;}
 
+/* ── Шарик-подсказка: всплывает, медленно улетает вверх, свайпается ───── */
+.balloon-toast{position:absolute;left:50%;bottom:100px;opacity:0;z-index:56;pointer-events:none;}
+.balloon-toast.balloon-active{pointer-events:auto;}
+.balloon-drag{position:relative;left:-50%;display:flex;flex-direction:column;align-items:center;touch-action:none;cursor:grab;}
+.balloon-shape{font-size:52px;line-height:1;filter:drop-shadow(0 6px 10px oklch(20% 0.05 40 / .35));}
+.balloon-msg{margin-top:-6px;background:var(--surface);color:var(--ink);font-weight:800;font-size:12.5px;line-height:1.4;padding:9px 13px;border-radius:14px;max-width:200px;text-align:center;box-shadow:0 6px 16px oklch(25% 0.02 90 / 0.24);}
+
 .skeleton{background:linear-gradient(90deg, var(--surface2) 25%, var(--border) 37%, var(--surface2) 63%);background-size:400% 100%;animation:sk 1.4s ease infinite;border-radius:14px;}
 @keyframes sk{0%{background-position:100% 50%;}100%{background-position:0 50%;}}
 
@@ -251,4 +302,6 @@ input,select{outline:none;}
 .list[hidden],
 .map-empty[hidden],
 .modal-overlay[hidden],
-.photo-picker-btn[hidden]{display:none;}
+.photo-picker-btn[hidden],
+.row2[hidden],
+.giveaway-phrases[hidden]{display:none;}
