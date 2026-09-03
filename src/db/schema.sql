@@ -44,6 +44,8 @@ create table if not exists listings (
   title              text not null,
   description        text,
   photo_file_id      text,
+  photo_data         bytea,
+  photo_mime         text,
   price              numeric(10,2) not null,
   unit               text not null,
   origin_point       geography(Point, 4326) not null,
@@ -87,6 +89,28 @@ create table if not exists reports (
   status        text not null default 'open',
   created_at    timestamptz not null default now()
   );
+
+-- Журнал согласий пользователей — только insert, ничего не обновляем и не
+-- удаляем через API. Храним не ссылку на текст, а его точный снимок на
+-- момент согласия: если формулировку потом поправят, старые записи всё
+-- равно будут доказывать, что именно было показано конкретному человеку
+-- в конкретный момент (нужно для 152-ФЗ и на случай споров).
+create table if not exists consents (
+  id              uuid primary key default gen_random_uuid(),
+  user_id         uuid references users(id) on delete set null,
+  telegram_id     bigint not null,
+  context         text not null,           -- 'create_listing' | 'contact_seller'
+  listing_id      uuid references listings(id) on delete set null,
+  consent_version text not null,
+  consent_text    text not null,
+  ip_address      text,
+  user_agent      text,
+  created_at      timestamptz not null default now()
+  );
+
+create index if not exists consents_user_idx on consents (user_id);
+create index if not exists consents_telegram_idx on consents (telegram_id);
+create index if not exists consents_created_idx on consents (created_at);
 
 create or replace function archive_expired_listings() returns void as $$
 begin
