@@ -25,6 +25,8 @@ const state = {
     category: null,
     origin: null,                 // {lat,lng}
     dest: null,                   // {lat,lng}
+    originLabel: null,            // текст адреса/метро, который ввели
+    destLabel: null,
     window: null,                 // {start,end,label} (ISO строки)
     photoDataUrl: null,           // data:image/jpeg;base64,... (уже сжатое)
   },
@@ -129,6 +131,15 @@ $$('.backbtn').forEach((b) => b.addEventListener('click', goBack));
 $$('.tab').forEach((b) => b.addEventListener('click', () => {
   state.screenStack = [b.dataset.tab];
   showScreen(b.dataset.tab, { push: false });
+  if (b.dataset.tab === 'home') {
+    // По нажатию «Главная» всегда возвращаемся на карту, а не остаёмся
+    // на «Списке», если переключались туда раньше в этой сессии.
+    state.view = 'map';
+    $$('.segment .opt').forEach((o) => o.classList.toggle('active', o.dataset.view === 'map'));
+    $('#mapView').hidden = false;
+    $('#listView').hidden = true;
+    if (leafletMap) setTimeout(() => leafletMap.invalidateSize(), 0);
+  }
   if (b.dataset.tab === 'profile') loadProfile();
   if (b.dataset.tab === 'create') openCreateScreen();
 }));
@@ -250,7 +261,9 @@ async function loadHome() {
 }
 
 // ── Настоящая интерактивная карта (Leaflet + OpenStreetMap) ────────────
-// Свободные тайлы без ключа — удобно для теста и небольшой аудитории.
+// Тайлы — CARTO Voyager: свободные, без ключа, но раздаются с их CDN,
+// а не с ограниченных для продакшна серверов *.tile.openstreetmap.org
+// (это и быстрее/плавнее, и корректнее по политике использования OSM).
 // Если/когда аудитория вырастет, стоит перейти на платного провайдера
 // тайлов (Яндекс.Карты, 2ГИС, MapTiler) — see README.
 const MOSCOW_CENTER = [55.7558, 37.6176];
@@ -260,12 +273,19 @@ let selectedMarker = null;
 
 function initMap() {
   if (leafletMap) return;
-  leafletMap = L.map('leafletMap', { zoomControl: false }).setView(MOSCOW_CENTER, 10);
+  // Зум 9, а не 10 — старт с менее детального обзора всего региона;
+  // детали (дома, мелкие улицы) подгружаются сами по мере приближения —
+  // так и работают любые тайловые карты, но именно так и просила Надя.
+  leafletMap = L.map('leafletMap', { zoomControl: false }).setView(MOSCOW_CENTER, 9);
   L.control.zoom({ position: 'bottomright' }).addTo(leafletMap);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
     maxZoom: 19,
-    attribution: '© OpenStreetMap',
+    subdomains: 'abcd',
+    attribution: '© OpenStreetMap, © CARTO',
   }).addTo(leafletMap);
+  // Убираем фирменную приписку «Leaflet» из подвала карты — оставляем
+  // только обязательную атрибуцию OSM/CARTO, без ссылки на leafletjs.com.
+  leafletMap.attributionControl.setPrefix(false);
   markerLayer = L.layerGroup().addTo(leafletMap);
   leafletMap.on('click', () => closeSheet());
 }
@@ -303,38 +323,104 @@ function selectMarker(marker) {
 }
 
 // ── Поиск по адресу/метро (геокодер Nominatim/OpenStreetMap) ───────────
+// Живые подсказки по мере ввода — как в навигаторе: печатаешь несколько
+// букв, снизу всплывает список, тап по варианту — переход. Никакой
+// автоподстановки геолокации устройства без явного выбора пользователя.
+async function nominatimSearch(query) {
+  // viewbox грубо ограничивает Москву и область — чтобы «Сокольники» не
+  // нашлись где-нибудь в другом городе.
+  const url = `https://nominatim.openstreetmap.org/search?format=json&limit=5&countrycodes=ru&viewbox=36.4,56.4,38.8,55.0&bounded=1&q=${encodeURIComponent(query + ', Москва')}`;
+  const res = await fetch(url, { headers: { 'Accept-Language': 'ru' } });
+  const results = await res.json();
+  return results.map((r) => ({ lat: Number(r.lat), lng: Number(r.lon), label: r.display_name }));
+}
+
+// Вешает на текстовое поле живой автокомплит с выпадающим списком.
+// onPick({lat,lng,label}) вызывается и при выборе адреса из списка,
+// и при явном тапе на «моё текущее местоположение» (если allowMyLocation).
+function attachAddressAutocomplete(inputEl, suggestEl, { allowMyLocation = false, onPick }) {
+  let debounceTimer = null;
+  let requestSeq = 0;
+
+  function renderItems(items) {
+    suggestEl.innerHTML = '';
+    items.forEach((item) => {
+      const row = el('button', 'geo-suggest-item');
+      row.type = 'button';
+      row.innerHTML = `<span class="geo-suggest-icon">${item.icon || '📍'}</span><span>${escapeHtml(item.label)}</span>`;
+      row.addEventListener('click', () => {
+        if (item.useMyLocation) {
+          if (!navigator.geolocation) { showToast('Геолокация недоступна в этом браузере'); return; }
+          inputEl.value = 'Определяем...';
+          suggestEl.hidden = true;
+          navigator.geolocation.getCurrentPosition(
+            (pos) => {
+              const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude, label: 'Моё текущее местоположение' };
+              inputEl.value = loc.label;
+              onPick(loc);
+            },
+            () => { inputEl.value = ''; showToast('Не удалось определить местоположение'); },
+            { enableHighAccuracy: true, timeout: 8000 }
+          );
+          return;
+        }
+        inputEl.value = item.label;
+        suggestEl.hidden = true;
+        onPick(item);
+      });
+      suggestEl.appendChild(row);
+    });
+    suggestEl.hidden = items.length === 0;
+  }
+
+  inputEl.addEventListener('focus', () => {
+    const q = inputEl.value.trim();
+    if (!q && allowMyLocation) {
+      renderItems([{ icon: '📍', label: 'Моё текущее местоположение', useMyLocation: true }]);
+    }
+  });
+
+  inputEl.addEventListener('input', () => {
+    const q = inputEl.value.trim();
+    clearTimeout(debounceTimer);
+    if (q.length < 3) {
+      suggestEl.hidden = true;
+      return;
+    }
+    const seq = ++requestSeq;
+    debounceTimer = setTimeout(async () => {
+      try {
+        const items = await nominatimSearch(q);
+        if (seq !== requestSeq) return; // ответ на устаревший запрос — игнорируем
+        renderItems(items);
+      } catch (e) {
+        suggestEl.hidden = true;
+      }
+    }, 350);
+  });
+
+  document.addEventListener('click', (e) => {
+    if (e.target !== inputEl && !suggestEl.contains(e.target)) suggestEl.hidden = true;
+  });
+}
+
 $('#btnMapSearch').addEventListener('click', () => {
   $('#mapSearchPanel').hidden = false;
   $('#mapSearchInput').focus();
 });
-$('#mapSearchCancel').addEventListener('click', () => { $('#mapSearchPanel').hidden = true; });
-$('#mapSearchGo').addEventListener('click', doMapSearch);
-$('#mapSearchInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') doMapSearch(); });
-
-async function doMapSearch() {
-  const q = $('#mapSearchInput').value.trim();
-  if (!q || !leafletMap) return;
-  const btn = $('#mapSearchGo');
-  btn.disabled = true;
-  try {
-    // viewbox грубо ограничивает Москву и область — чтобы «Сокольники» не
-    // нашлись где-нибудь в другом городе.
-    const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=ru&viewbox=36.4,56.4,38.8,55.0&bounded=1&q=${encodeURIComponent(q + ', Москва')}`;
-    const res = await fetch(url, { headers: { 'Accept-Language': 'ru' } });
-    const results = await res.json();
-    if (!results.length) {
-      showToast('Не нашли такое место — попробуйте сформулировать иначе');
-      return;
-    }
-    leafletMap.flyTo([Number(results[0].lat), Number(results[0].lon)], 14, { duration: 1.1 });
+$('#mapSearchCancel').addEventListener('click', () => {
+  $('#mapSearchPanel').hidden = true;
+  $('#mapSearchSuggest').hidden = true;
+});
+attachAddressAutocomplete($('#mapSearchInput'), $('#mapSearchSuggest'), {
+  allowMyLocation: false,
+  onPick: (loc) => {
+    if (!leafletMap) return;
+    leafletMap.flyTo([loc.lat, loc.lng], 14, { duration: 1.1 });
     $('#mapSearchPanel').hidden = true;
     $('#mapSearchInput').value = '';
-  } catch (e) {
-    showToast('Не удалось найти адрес — проверьте связь');
-  } finally {
-    btn.disabled = false;
-  }
-}
+  },
+});
 
 // ── Едущие машинки — декоративная анимация «продукты едут в Москву» ────
 // Спавнятся у случайного края видимой области карты и едут к случайному
@@ -361,9 +447,14 @@ function pickCarTarget() {
   return { lat: c.lat, lng: c.lng };
 }
 
+// Не больше 2 машинок одновременно, и двигаем их не на каждый кадр (60/сек
+// тут ни к чему для медленно едущей точки), а ~12 раз в секунду — этого не
+// видно на глаз, а нагрузка на слабых телефонах заметно ниже.
+const CAR_STEP_MS = 80;
+
 function spawnCar() {
   if (!leafletMap || document.hidden || $('#screen-home').hidden || $('#mapView').hidden) return;
-  if (activeCars.length >= 3) return;
+  if (activeCars.length >= 2) return;
 
   const bounds = leafletMap.getBounds();
   const start = randomEdgePoint(bounds);
@@ -379,7 +470,13 @@ function spawnCar() {
 
   const durationMs = 7000 + Math.random() * 5000;
   const t0 = performance.now();
+  let lastStep = 0;
   function step(now) {
+    if (now - lastStep < CAR_STEP_MS) {
+      if (activeCars.includes(car)) requestAnimationFrame(step);
+      return;
+    }
+    lastStep = now;
     const t = Math.min(1, (now - t0) / durationMs);
     car.setLatLng([start.lat + (target.lat - start.lat) * t, start.lng + (target.lng - start.lng) * t]);
     if (t < 1) {
@@ -394,7 +491,7 @@ function spawnCar() {
 
 function startCarAnimation() {
   spawnCar();
-  setInterval(spawnCar, 3500);
+  setInterval(spawnCar, 4500);
 }
 
 function renderList(listings) {
@@ -666,22 +763,53 @@ function renderTimeChips() {
   });
 }
 
-function pickGeo(kind) {
-  if (!navigator.geolocation) { showToast('Геолокация недоступна в этом браузере'); return; }
-  const valEl = kind === 'origin' ? $('#originVal') : $('#destVal');
-  valEl.textContent = 'Определяем...';
-  navigator.geolocation.getCurrentPosition(
-    (pos) => {
-      const loc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      state.create[kind] = loc;
-      valEl.textContent = `${loc.lat.toFixed(4)}, ${loc.lng.toFixed(4)}`;
-    },
-    () => { valEl.textContent = 'не удалось определить'; showToast('Не удалось определить местоположение'); },
-    { enableHighAccuracy: true, timeout: 8000 }
-  );
+// Точки маршрута — теперь только через поиск метро/адреса (живые
+// подсказки, см. attachAddressAutocomplete выше), без автоматического
+// подхвата геолокации устройства: Надя жаловалась, что раньше жать на
+// поле означало «система сама подставляет моё местоположение» — теперь
+// нужно явно ввести адрес или явно тапнуть «моё текущее местоположение».
+attachAddressAutocomplete($('#originInput'), $('#originSuggest'), {
+  allowMyLocation: true,
+  onPick: (loc) => {
+    state.create.origin = { lat: loc.lat, lng: loc.lng };
+    state.create.originLabel = loc.label;
+  },
+});
+attachAddressAutocomplete($('#destInput'), $('#destSuggest'), {
+  allowMyLocation: true,
+  onPick: (loc) => {
+    state.create.dest = { lat: loc.lat, lng: loc.lng };
+    state.create.destLabel = loc.label;
+  },
+});
+
+// ── Своё время выезда (в дополнение к готовым чипам) ────────────────────
+function toLocalInputValue(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
-$('#btnOrigin').addEventListener('click', () => pickGeo('origin'));
-$('#btnDest').addEventListener('click', () => pickGeo('dest'));
+$('#btnCustomTime').addEventListener('click', () => {
+  const form = $('#customTimeForm');
+  form.hidden = !form.hidden;
+  if (!form.hidden && !$('#customTimeStart').value) {
+    const now = new Date();
+    const start = new Date(now.getTime() + 60 * 60 * 1000);
+    const end = new Date(now.getTime() + 4 * 60 * 60 * 1000);
+    $('#customTimeStart').value = toLocalInputValue(start);
+    $('#customTimeEnd').value = toLocalInputValue(end);
+  }
+});
+$('#btnCustomTimeApply').addEventListener('click', () => {
+  const sVal = $('#customTimeStart').value;
+  const eVal = $('#customTimeEnd').value;
+  if (!sVal || !eVal) { showToast('Укажите обе даты'); return; }
+  const start = new Date(sVal), end = new Date(eVal);
+  if (end <= start) { showToast('Время «до» должно быть позже времени «с»'); return; }
+  state.create.window = { label: 'Своё время', start: start.toISOString(), end: end.toISOString() };
+  renderTimeChips();
+  $('#customTimeForm').hidden = true;
+  showToast('Время выезда указано');
+});
 
 // ── Фото урожая (необязательно) ──────────────────────────────────────
 // Сжимаем прямо на клиенте через canvas, прежде чем отправлять —
@@ -737,12 +865,17 @@ function resetCreateForm() {
   $('#fTitle').value = '';
   $('#fDescription').value = '';
   $('#fPrice').value = '';
-  $('#originVal').textContent = 'не указано';
-  $('#destVal').textContent = 'не указано';
+  $('#originInput').value = '';
+  $('#destInput').value = '';
   $('#photoPreviewWrap').hidden = true;
   $('#btnPickPhoto').hidden = false;
+  $('#customTimeForm').hidden = true;
+  $('#customTimeStart').value = '';
+  $('#customTimeEnd').value = '';
   state.create.origin = null;
   state.create.dest = null;
+  state.create.originLabel = null;
+  state.create.destLabel = null;
   state.create.window = null;
   state.create.photoDataUrl = null;
   renderTimeChips();
@@ -788,11 +921,27 @@ $('#btnPublish').addEventListener('click', async () => {
       },
     });
     recordConsent('create_listing', created.id);
-    showToast('Объявление опубликовано!');
+    // Данные для красивой карточки-подтверждения берём из того, что сами
+    // только что отправили (сервер в ответ отдаёт только id/created_at) —
+    // и фото показываем сразу из уже готового data:URL, без похода на сервер.
+    const published = {
+      id: created.id,
+      category_slug: category,
+      title,
+      description,
+      price,
+      unit,
+      window_start: win.start,
+      window_end: win.end,
+      originLabel: state.create.originLabel,
+      destLabel: state.create.destLabel,
+      photoDataUrl,
+    };
     resetCreateForm();
-    state.screenStack = ['home'];
-    showScreen('home', { push: false });
     loadHome();
+    renderPublishedCard(published);
+    state.screenStack = ['home'];
+    showScreen('published', { push: true });
   } catch (e) {
     errEl.textContent = e.message;
     errEl.hidden = false;
@@ -800,6 +949,43 @@ $('#btnPublish').addEventListener('click', async () => {
     $('#btnPublish').disabled = false;
   }
 });
+
+// ── Экран «Объявление опубликовано» — красивое подтверждение ──────────
+function renderPublishedCard(l) {
+  const meta = CATEGORY_META[l.category_slug] || CATEGORY_META.other;
+  const body = $('#publishedBody');
+  const photoHtml = l.photoDataUrl ? `<img src="${l.photoDataUrl}" alt="">` : '';
+  const routeText = [l.originLabel, l.destLabel].filter(Boolean).join(' → ');
+  body.innerHTML = `
+    <div class="published-badge">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/><path d="M7.5 12.5l3 3 6-6.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Объявление опубликовано и уже видно на карте
+    </div>
+    <div class="detail-hero" style="background:${meta.bg}">
+      ${categoryIcon(l.category_slug)}
+      ${photoHtml}
+    </div>
+    <div>
+      <div class="detail-title">${escapeHtml(l.title)}</div>
+      <div class="detail-price">${formatPrice(l.price)} ₽ / ${escapeHtml(l.unit)}</div>
+    </div>
+    ${l.description ? `<div class="detail-desc">${escapeHtml(l.description)}</div>` : ''}
+    <div class="detail-row">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="3" stroke="currentColor" stroke-width="1.8"/><path d="M8 3v4M16 3v4M3 10h18" stroke="currentColor" stroke-width="1.8"/></svg>
+      ${formatWindow(l.window_start, l.window_end)}
+    </div>
+    ${routeText ? `
+      <div class="detail-row">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M12 22s7-7.4 7-12.6A7 7 0 0 0 5 9.4C5 14.6 12 22 12 22Z" stroke="currentColor" stroke-width="1.8"/></svg>
+        ${escapeHtml(routeText)}
+      </div>` : ''}
+    <button class="btn-primary" id="publishedDone">На главную</button>
+  `;
+  $('#publishedDone').addEventListener('click', () => {
+    state.screenStack = ['home'];
+    showScreen('home', { push: false });
+  });
+}
 
 // ── Экран «Профиль» (свой) ────────────────────────────────────────────
 async function loadProfile() {

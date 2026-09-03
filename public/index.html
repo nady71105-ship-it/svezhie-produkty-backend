@@ -62,11 +62,11 @@
         Метро или адрес
       </button>
       <div id="mapSearchPanel" class="map-search-panel" hidden>
-        <input id="mapSearchInput" class="field" placeholder="Например: Сокольники">
-        <div style="display:flex;gap:8px;margin-top:8px;">
-          <button type="button" class="btn-primary" id="mapSearchGo" style="flex:1;height:40px;">Найти</button>
-          <button type="button" class="btn-secondary" id="mapSearchCancel" style="flex:1;height:40px;">Отмена</button>
+        <div class="geo-search-wrap">
+          <input id="mapSearchInput" class="field" placeholder="Например: Сокольники" autocomplete="off">
+          <div id="mapSearchSuggest" class="geo-suggest" hidden></div>
         </div>
+        <button type="button" class="btn-secondary" id="mapSearchCancel" style="margin-top:8px;">Отмена</button>
       </div>
 
       <div id="mapEmpty" class="map-empty" hidden>Пока ничего не найдено рядом — попробуйте увеличить радиус или снять фильтры</div>
@@ -162,8 +162,10 @@
           <div class="dot" style="background:oklch(58% 0.13 145);"></div>
           <div class="rtext">
             <div class="rlabel">Откуда (ваша дача/дом)</div>
-            <button class="geobtn" id="btnOrigin" data-kind="origin">Определить моё местоположение</button>
-            <div class="rval" id="originVal">не указано</div>
+            <div class="geo-search-wrap">
+              <input class="geo-input" id="originInput" placeholder="Метро или адрес" autocomplete="off">
+              <div id="originSuggest" class="geo-suggest" hidden></div>
+            </div>
           </div>
         </div>
         <div class="rconnector"></div>
@@ -171,12 +173,28 @@
           <div class="dot" style="background:oklch(58% 0.19 29);"></div>
           <div class="rtext">
             <div class="rlabel">Куда везёте (город/район)</div>
-            <button class="geobtn" id="btnDest" data-kind="dest">Определить моё местоположение</button>
-            <div class="rval" id="destVal">не указано</div>
+            <div class="geo-search-wrap">
+              <input class="geo-input" id="destInput" placeholder="Метро или адрес" autocomplete="off">
+              <div id="destSuggest" class="geo-suggest" hidden></div>
+            </div>
           </div>
         </div>
 
         <div class="timechips" id="timeChips"></div>
+        <button type="button" class="custom-time-btn" id="btnCustomTime">+ Своё время</button>
+        <div class="custom-time-form" id="customTimeForm" hidden>
+          <div class="row2">
+            <div>
+              <div class="label" style="margin-bottom:4px;">С</div>
+              <input type="datetime-local" class="field" id="customTimeStart">
+            </div>
+            <div>
+              <div class="label" style="margin-bottom:4px;">До</div>
+              <input type="datetime-local" class="field" id="customTimeEnd">
+            </div>
+          </div>
+          <button type="button" class="btn-secondary" id="btnCustomTimeApply" style="margin-top:8px;">Применить</button>
+        </div>
       </div>
 
       <div id="createError" class="error-text" hidden></div>
@@ -186,6 +204,14 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none"><path d="M5 12h14M13 6l6 6-6 6" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
     </div>
+  </section>
+
+  <!-- ── Экран «Объявление опубликовано» ─────────────────────────────── -->
+  <section id="screen-published" class="screen" hidden>
+    <div class="topbar">
+      <div class="h1">Готово!</div>
+    </div>
+    <div class="body" id="publishedBody"></div>
   </section>
 
   <!-- ── Экран «Профиль» (свой) ───────────────────────────────────────── -->
