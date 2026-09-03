@@ -14,6 +14,7 @@ import { categoriesRouter } from './routes/categories.js';
   import { usersRouter } from './routes/users.js';
   import { reviewsRouter } from './routes/reviews.js';
   import { analyticsRouter } from './routes/analytics.js';
+  import { consentsRouter } from './routes/consents.js';
   import { startBot } from './bot/bot.js';
 
 // Последний рубеж защиты: если какая-то зависимость (например, сетевой
@@ -30,8 +31,14 @@ process.on('uncaughtException', (err) => {
   });
 
 const app = express();
+  // Railway ставит сервис за свой обратный прокси — без этого req.ip был
+  // бы IP-адресом самого прокси, а не покупателя/продавца. Нужен для
+  // журнала согласий (consents.js), где IP — часть доказательства.
+  app.set('trust proxy', true);
   app.use(cors());
-  app.use(express.json());
+  // Лимит поднят с дефолтных 100kb — фото объявления едет как base64 в
+  // теле POST /listings (см. listings.js, там же и защита по размеру).
+  app.use(express.json({ limit: '4mb' }));
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
@@ -39,6 +46,7 @@ app.use('/categories', categoriesRouter);
   app.use('/listings', listingsRouter);
   app.use('/users', usersRouter);
   app.use('/reviews', reviewsRouter);
+  app.use('/consents', consentsRouter);
   app.use('/admin/analytics', analyticsRouter);
 
 // ── Статика мини-аппа (фронтенд, public/) ──────────────────────────────
@@ -58,9 +66,9 @@ app.use((err, _req, res, _next) => {
 
 // SPA-фолбэк: любой GET, не пойманный роутами/статикой выше (и не
 // начинающийся с /health, /categories, /listings, /users, /reviews,
-// /admin), отдаём index.html — навигация внутри мини-аппа своя, без
-// перезагрузки страницы.
-app.get(/^\/(?!health|categories|listings|users|reviews|admin).*/, (_req, res) => {
+// /consents, /admin), отдаём index.html — навигация внутри мини-аппа своя,
+// без перезагрузки страницы.
+app.get(/^\/(?!health|categories|listings|users|reviews|consents|admin).*/, (_req, res) => {
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 
