@@ -56,7 +56,22 @@ app.use('/categories', categoriesRouter);
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const publicDir = path.join(__dirname, '..', 'public');
-app.use(express.static(publicDir));
+// Telegram-клиент (особенно WKWebView на iOS) кэширует мини-апп заметно
+// агрессивнее обычного браузера — после деплоя новой версии люди иногда
+// продолжают видеть старый JS/CSS, пока сами не перезапустят Telegram.
+// Явно запрещаем кэширование самой оболочки приложения (index.html,
+// app.js, styles.css, icons.js) — это маленькие файлы, лишний трафик от
+// no-cache тут не страшен, а свежая версия гарантированно подхватывается
+// сразу. Остальную статику (картинки, admin.html) не трогаем.
+const NO_CACHE_FILES = new Set(['/index.html', '/app.js', '/styles.css', '/icons.js']);
+app.use(express.static(publicDir, {
+  setHeaders: (res, filePath) => {
+    const rel = '/' + path.relative(publicDir, filePath).replace(/\\/g, '/');
+    if (NO_CACHE_FILES.has(rel)) {
+      res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
+    }
+  },
+}));
 
 // Единообразная обработка ошибок — чтобы в проде не утекал стектрейс
 app.use((err, _req, res, _next) => {
@@ -69,6 +84,7 @@ app.use((err, _req, res, _next) => {
 // /consents, /admin), отдаём index.html — навигация внутри мини-аппа своя,
 // без перезагрузки страницы.
 app.get(/^\/(?!health|categories|listings|users|reviews|consents|admin).*/, (_req, res) => {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.sendFile(path.join(publicDir, 'index.html'));
 });
 
