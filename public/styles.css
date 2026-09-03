@@ -222,11 +222,15 @@ input,select{outline:none;}
 .detail-hero img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;}
 
 /* ── [hidden] должен побеждать ────────────────────────────────────────
-   У .screen/.app/.list/.map-empty есть свой display, и по специфичности
-   он равен встроенному правилу браузера [hidden]{display:none} — а идёт
-   позже него в каскаде, поэтому побеждает. Без этой перебивки все экраны
-   рендерились бы одновременно, друг под другом. */
+   У .screen/.app/.list/.map-empty/.modal-overlay/.photo-picker-btn есть
+   свой display, и по специфичности он равен встроенному правилу браузера
+   [hidden]{display:none} — а идёт позже него в каскаде, поэтому побеждает.
+   Без этой перебивки эти элементы оставались бы видимыми (и, в случае
+   .modal-overlay, перехватывали бы клики по всему приложению) даже с
+   атрибутом hidden. */
 .screen[hidden],
 .app[hidden],
 .list[hidden],
-.map-empty[hidden]{display:none;}
+.map-empty[hidden],
+.modal-overlay[hidden],
+.photo-picker-btn[hidden]{display:none;}
