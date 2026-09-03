@@ -40,16 +40,27 @@
     <div class="topbar">
       <div class="place">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none"><path d="M12 22s7-7.4 7-12.6A7 7 0 0 0 5 9.4C5 14.6 12 22 12 22Z" stroke="var(--brand)" stroke-width="2"/><circle cx="12" cy="9.4" r="2.6" fill="var(--brand)"/></svg>
-        <span id="locLabel">Рядом с вами</span>
+        <span id="locLabel">Продукты с грядки</span>
       </div>
-      <button class="iconbtn" id="btnGeo" title="Определить моё местоположение">
-        <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="oklch(30% 0.03 60)" stroke-width="2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="oklch(30% 0.03 60)" stroke-width="2" stroke-linecap="round"/></svg>
+      <button class="iconbtn iconbtn-recipes" id="btnRecipes" title="Рецепты и заготовки">
+        <svg width="19" height="19" viewBox="0 0 24 24" fill="none">
+          <path d="M12 21c-4.5-3-7-6.2-7-9.8A5.2 5.2 0 0 1 12 6a5.2 5.2 0 0 1 7 5.2c0 3.6-2.5 6.8-7 9.8Z" fill="oklch(58% 0.15 145)"/>
+          <path d="M12 21V10" stroke="oklch(38% 0.09 145)" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        <span class="iconbtn-dot" id="recipesDot" hidden></span>
       </button>
     </div>
 
     <div class="home-hint" id="homeHint"></div>
 
-    <div class="home-counter" id="homeCounter"></div>
+    <div class="home-counter" id="homeCounter">
+      <span class="home-counter-icon">📦</span>
+      <div class="home-counter-text">
+        <div class="home-counter-lead">За сезон соседям передано уже</div>
+        <div class="home-counter-nums"><b id="homeCounterKg">≈1&nbsp;240 кг</b><span class="home-counter-and">и</span><b id="homeCounterL">≈340 л</b></div>
+        <div class="home-counter-lead">свежих продуктов</div>
+      </div>
+    </div>
 
     <div class="segment">
       <div class="opt active" data-view="map">Карта</div>
@@ -60,6 +71,10 @@
 
     <div id="mapView" class="mapwrap">
       <div id="leafletMap" class="leaflet-fill"></div>
+
+      <button id="btnGeo" class="map-locate-btn" title="Определить моё местоположение">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="3" stroke="oklch(30% 0.03 60)" stroke-width="2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="oklch(30% 0.03 60)" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
 
       <button id="btnMapSearch" class="map-search-btn">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none"><circle cx="11" cy="11" r="7" stroke="currentColor" stroke-width="2"/><path d="M21 21l-4.3-4.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
@@ -201,16 +216,29 @@
 
         <div class="time-section" id="timeSection">
           <div class="timechips" id="timeChips"></div>
-          <button type="button" class="custom-time-btn" id="btnCustomTime">+ Своё время</button>
+          <button type="button" class="custom-time-btn" id="btnCustomTime">+ Своя дата</button>
           <div class="custom-time-form" id="customTimeForm" hidden>
+            <div class="daterange-toggle">
+              <button type="button" class="dr-opt active" id="drOptOneDay">Один день</button>
+              <button type="button" class="dr-opt" id="drOptPeriod">Период дат</button>
+            </div>
             <div class="row2">
               <div>
-                <div class="label" style="margin-bottom:4px;">С</div>
-                <input type="datetime-local" class="field" id="customTimeStart">
+                <div class="label" style="margin-bottom:4px;">Дата</div>
+                <input type="date" class="field" id="customDateStart">
+              </div>
+              <div id="dateEndWrap" hidden>
+                <div class="label" style="margin-bottom:4px;">По какое число</div>
+                <input type="date" class="field" id="customDateEnd">
+              </div>
+            </div>
+            <div class="label" style="margin-top:10px;margin-bottom:4px;">Время (необязательно)</div>
+            <div class="row2">
+              <div>
+                <input type="time" class="field" id="customTimeStart" placeholder="С">
               </div>
               <div>
-                <div class="label" style="margin-bottom:4px;">До</div>
-                <input type="datetime-local" class="field" id="customTimeEnd">
+                <input type="time" class="field" id="customTimeEnd" placeholder="До">
               </div>
             </div>
             <div class="custom-time-preview" id="customTimePreview"></div>
@@ -247,15 +275,31 @@
   <!-- ── Нижняя навигация ─────────────────────────────────────────────── -->
   <div class="tabbar">
     <button class="tab active" data-tab="home">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 22s7-7.4 7-12.6A7 7 0 0 0 5 9.4C5 14.6 12 22 12 22Z" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="9.4" r="2.4" fill="currentColor"/></svg>
+      <svg width="22" height="22" viewBox="0 0 24 24">
+        <defs><linearGradient id="tabHomeG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="currentColor" stop-opacity="1"/><stop offset="100%" stop-color="currentColor" stop-opacity=".55"/></linearGradient></defs>
+        <path d="M12 22s7-7.4 7-12.6A7 7 0 0 0 5 9.4C5 14.6 12 22 12 22Z" fill="url(#tabHomeG)"/>
+        <circle cx="12" cy="9.4" r="2.5" fill="white" fill-opacity=".92"/>
+      </svg>
       Главная
     </button>
     <button class="tab" data-tab="create">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      <svg width="22" height="22" viewBox="0 0 24 24">
+        <defs><linearGradient id="tabPlusG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="currentColor" stop-opacity="1"/><stop offset="100%" stop-color="currentColor" stop-opacity=".6"/></linearGradient></defs>
+        <circle cx="12" cy="12" r="10" fill="url(#tabPlusG)"/>
+        <path d="M12 7.2v9.6M7.2 12h9.6" stroke="white" stroke-width="2.1" stroke-linecap="round"/>
+      </svg>
       Разместить
     </button>
     <button class="tab" data-tab="profile">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><circle cx="12" cy="8" r="3.6" stroke="currentColor" stroke-width="2"/><path d="M4.5 20c1.6-3.6 5-5.4 7.5-5.4s5.9 1.8 7.5 5.4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      <svg width="22" height="22" viewBox="0 0 24 24">
+        <defs><linearGradient id="tabOnionG" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="currentColor" stop-opacity=".55"/><stop offset="100%" stop-color="currentColor" stop-opacity="1"/></linearGradient></defs>
+        <path d="M9.3 6.2c-.2-2.2 1-4.4 2.7-4.4s3 2.2 2.7 4.4" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+        <path d="M12 6.4c-4 0-6.6 3.5-6.6 7.7 0 4.3 2.9 7.3 6.6 7.3s6.6-3 6.6-7.3c0-4.2-2.6-7.7-6.6-7.7Z" fill="url(#tabOnionG)"/>
+        <ellipse cx="9.6" cy="12.6" rx="1.2" ry="1.5" fill="white" fill-opacity=".55"/>
+        <circle cx="9.7" cy="13.4" r="1" fill="white"/>
+        <circle cx="14.3" cy="13.4" r="1" fill="white"/>
+        <path d="M9.7 16.6c.8.7 2.9.7 3.7 0" stroke="white" stroke-width="1.3" fill="none" stroke-linecap="round"/>
+      </svg>
       Профиль
     </button>
   </div>
@@ -264,8 +308,8 @@
 
   <div id="balloonToast" class="balloon-toast" hidden>
     <div class="balloon-drag" id="balloonDrag">
-      <div class="balloon-shape">🎈</div>
       <div class="balloon-msg" id="balloonMsg"></div>
+      <div class="balloon-knot"></div>
     </div>
   </div>
 
@@ -275,6 +319,17 @@
       <div class="modal-text" id="termsText">Загрузка…</div>
       <div class="modal-actions">
         <button type="button" class="btn-primary" id="termsAccept">Принимаю и продолжаю</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="recipesSheet" class="modal-overlay" hidden>
+    <div class="modal-card">
+      <div class="modal-title">🧅 Рецепты и заготовки</div>
+      <div class="modal-text" id="recipesText">Загрузка…</div>
+      <div class="modal-actions">
+        <button type="button" class="btn-secondary" id="recipesNext">Ещё совет</button>
+        <button type="button" class="btn-primary" id="recipesClose">Понятно</button>
       </div>
     </div>
   </div>

@@ -54,7 +54,9 @@ input,select{outline:none;}
 
 .topbar{display:flex;align-items:center;gap:12px;justify-content:space-between;padding:16px 18px 8px;flex-shrink:0;}
 .place{display:flex;align-items:center;gap:6px;font-weight:800;font-size:16px;}
-.iconbtn{width:38px;height:38px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px oklch(30% 0.02 90 / 0.12);flex-shrink:0;}
+.iconbtn{position:relative;width:38px;height:38px;border-radius:50%;background:var(--surface);display:flex;align-items:center;justify-content:center;box-shadow:0 2px 6px oklch(30% 0.02 90 / 0.12);flex-shrink:0;}
+.iconbtn-dot{position:absolute;top:6px;right:7px;width:8px;height:8px;border-radius:50%;background:var(--brand);box-shadow:0 0 0 2px var(--surface);}
+.map-locate-btn{position:absolute;right:12px;top:12px;z-index:420;width:36px;height:36px;border-radius:50%;background:oklch(99% 0.01 90 / 0.96);display:flex;align-items:center;justify-content:center;box-shadow:0 4px 14px oklch(25% 0.02 90 / 0.18);}
 .backbtn{width:34px;height:34px;border-radius:50%;background:var(--surface2);display:flex;align-items:center;justify-content:center;flex-shrink:0;}
 .h1{font-weight:800;font-size:18px;}
 
@@ -64,8 +66,13 @@ input,select{outline:none;}
 
 /* ── Маркетинговые подсказки сверху главной ────────────────────────────── */
 .home-hint{margin:0 18px 8px;padding:11px 14px;background:linear-gradient(135deg, oklch(92% 0.06 145), oklch(94% 0.06 95));border-radius:14px;font-size:12.5px;font-weight:700;color:oklch(32% 0.08 145);line-height:1.4;flex-shrink:0;transition:opacity .35s;}
-.home-counter{margin:0 18px 10px;padding:9px 14px;background:var(--surface);border:1.5px solid var(--border);border-radius:12px;font-size:12px;font-weight:700;color:var(--ink-soft);flex-shrink:0;display:flex;align-items:center;gap:6px;}
-.home-counter b{color:var(--brand-dark);font-weight:800;}
+.home-counter{margin:0 18px 10px;padding:11px 14px;background:var(--surface);border:1.5px solid var(--border);border-radius:14px;flex-shrink:0;display:flex;align-items:flex-start;gap:10px;}
+.home-counter-icon{font-size:19px;line-height:1;margin-top:2px;flex-shrink:0;}
+.home-counter-text{display:flex;flex-direction:column;gap:3px;min-width:0;}
+.home-counter-lead{font-size:11px;font-weight:700;color:var(--ink-soft);line-height:1.3;}
+.home-counter-nums{display:flex;align-items:baseline;gap:6px;flex-wrap:wrap;}
+.home-counter-nums b{font-size:17px;font-weight:800;color:var(--brand-dark);}
+.home-counter-and{font-size:11px;font-weight:700;color:var(--ink-mute);}
 
 .filterrow{display:flex;gap:8px;padding:0 18px 10px;overflow-x:auto;flex-shrink:0;scrollbar-width:none;}
 .filterrow::-webkit-scrollbar{display:none;}
@@ -143,7 +150,10 @@ input,select{outline:none;}
 .giveaway-phrases{display:flex;flex-wrap:wrap;gap:7px;}
 .phrase-chip{padding:7px 11px;border-radius:11px;background:oklch(92% 0.05 145);color:oklch(35% 0.09 145);font-weight:700;font-size:12px;}
 
-/* ── Своё время: красивый предпросмотр вместо голого datetime-инпута ──── */
+/* ── Своя дата: переключатель «один день / период» + предпросмотр ─────── */
+.daterange-toggle{display:flex;background:var(--surface2);border-radius:11px;padding:3px;gap:3px;margin-bottom:10px;}
+.dr-opt{flex:1;text-align:center;padding:7px 0;border-radius:9px;font-weight:700;font-size:12px;color:var(--ink-soft);}
+.dr-opt.active{background:var(--surface);color:var(--ink);box-shadow:0 2px 6px oklch(30% 0.02 90 / 0.14);}
 .custom-time-preview{margin-top:8px;font-size:12.5px;font-weight:700;color:oklch(35% 0.09 145);}
 .timechip-custom{display:flex;align-items:center;gap:4px;}
 
@@ -196,9 +206,15 @@ input,select{outline:none;}
 .route-line{position:relative;display:flex;align-items:center;justify-content:space-between;height:26px;}
 .route-line::before{content:'';position:absolute;left:14px;right:14px;top:50%;height:2px;background:repeating-linear-gradient(90deg, oklch(70% 0.06 145) 0 6px, transparent 6px 12px);transform:translateY(-50%);}
 .route-house,.route-pin{font-size:19px;z-index:1;}
-.route-truck{position:absolute;top:50%;left:14px;transform:translate(0,-50%);animation:routeDrive 3.6s ease-in-out infinite alternate;filter:drop-shadow(0 2px 3px oklch(20% 0.05 40 / .3));}
+/* Едет один раз (не туда-сюда), медленнее, чем раньше, и растворяется по
+   приезде к булавке — а не бегает бесконечно взад-вперёд. */
+.route-truck{position:absolute;top:50%;left:14px;transform:translate(0,-50%);animation:routeDrive 4.8s ease-in-out forwards;filter:drop-shadow(0 2px 3px oklch(20% 0.05 40 / .3));}
 .route-truck svg{display:block;width:26px;height:auto;}
-@keyframes routeDrive{from{left:14px;}to{left:calc(100% - 34px);}}
+@keyframes routeDrive{
+  0%{left:14px;opacity:1;}
+  82%{left:calc(100% - 34px);opacity:1;}
+  100%{left:calc(100% - 34px);opacity:0;}
+}
 .route-labels{display:flex;justify-content:space-between;gap:10px;margin-top:8px;font-size:11.5px;font-weight:700;color:var(--ink-soft);}
 .route-labels span{display:flex;align-items:center;gap:4px;min-width:0;}
 .route-labels span:last-child{text-align:right;flex-direction:row-reverse;}
@@ -254,18 +270,38 @@ input,select{outline:none;}
 
 /* ── Tabbar ─────────────────────────────────────────────────────────── */
 .tabbar{height:74px;background:var(--surface);border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-around;padding-bottom:8px;flex-shrink:0;}
-.tab{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;font-weight:700;color:var(--ink-mute);}
-.tab.active{color:var(--brand);}
+.tab{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:11px;font-weight:700;color:var(--ink-mute);padding:6px 16px;border-radius:14px;transition:background .15s,color .15s;}
+.tab svg{filter:drop-shadow(0 1px 1.5px oklch(30% 0.03 60 / .18));}
+.tab.active{color:var(--brand);background:color-mix(in oklch, var(--brand) 12%, white);}
+
+/* ── Профиль: раздел «Чаты» — пояснение, что переписка идёт в Telegram ── */
+.chats-note{font-size:12px;color:var(--ink-soft);line-height:1.5;background:var(--surface);border-radius:14px;padding:12px 14px;}
 
 /* ── Toast ──────────────────────────────────────────────────────────── */
 .toast{position:absolute;left:18px;right:18px;bottom:88px;background:oklch(22% 0.03 60);color:white;font-weight:700;font-size:13px;padding:12px 16px;border-radius:14px;text-align:center;box-shadow:0 8px 20px oklch(20% 0.02 60 / 0.3);z-index:50;}
 
-/* ── Шарик-подсказка: всплывает, медленно улетает вверх, свайпается ───── */
+/* ── Шарик-подсказка: всплывает, долго висит (успеть прочитать), медленно
+   улетает вверх, свайпается. Раньше был отдельный эмодзи-шарик 🎈 сверху и
+   обычная прямоугольная рамка с текстом под ним — Надя попросила сделать
+   так, чтобы шариком выглядел сам текстовый контейнер: прозрачный,
+   округлый, с бликом и «хвостиком»-узелком снизу, без отдельной картинки. */
 .balloon-toast{position:absolute;left:50%;bottom:100px;opacity:0;z-index:56;pointer-events:none;}
 .balloon-toast.balloon-active{pointer-events:auto;}
 .balloon-drag{position:relative;left:-50%;display:flex;flex-direction:column;align-items:center;touch-action:none;cursor:grab;}
-.balloon-shape{font-size:52px;line-height:1;filter:drop-shadow(0 6px 10px oklch(20% 0.05 40 / .35));}
-.balloon-msg{margin-top:-6px;background:var(--surface);color:var(--ink);font-weight:800;font-size:12.5px;line-height:1.4;padding:9px 13px;border-radius:14px;max-width:200px;text-align:center;box-shadow:0 6px 16px oklch(25% 0.02 90 / 0.24);}
+.balloon-msg{
+  position:relative;
+  background:linear-gradient(160deg, oklch(68% 0.17 29 / .84), oklch(52% 0.19 27 / .9));
+  color:white;font-weight:800;font-size:12.5px;line-height:1.42;
+  padding:22px 22px 26px;
+  border-radius:52% 48% 50% 50% / 60% 58% 42% 40%;
+  max-width:210px;min-width:160px;text-align:center;
+  box-shadow:0 12px 26px oklch(30% 0.12 29 / 0.32), inset 0 2px 12px oklch(100% 0 0 / .22);
+}
+.balloon-msg::before{
+  content:'';position:absolute;left:20%;top:13%;width:24%;height:15%;
+  background:oklch(100% 0 0 / .5);border-radius:50%;filter:blur(1.5px);
+}
+.balloon-knot{width:0;height:0;margin:-2px auto 0;border-left:7px solid transparent;border-right:7px solid transparent;border-top:12px solid oklch(52% 0.19 27 / .9);}
 
 .skeleton{background:linear-gradient(90deg, var(--surface2) 25%, var(--border) 37%, var(--surface2) 63%);background-size:400% 100%;animation:sk 1.4s ease infinite;border-radius:14px;}
 @keyframes sk{0%{background-position:100% 50%;}100%{background-position:0 50%;}}

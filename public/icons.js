@@ -117,6 +117,20 @@ const ICONS = {
   </svg>`,
 };
 
+// Один и тот же slug (например «vegetables») одновременно рисуется в
+// нескольких местах на странице — на карте, в списке, в чипах формы
+// создания — и все они лежат в DOM одновременно (просто часть скрыта
+// через [hidden]). Раньше все копии одной иконки использовали ОДИНАКОВЫЕ
+// id для градиентов (id="icTomBodyG" и т.п.) — в WebKit (в том числе
+// внутри Telegram на iOS) это иногда приводит к тому, что url(#icTomBodyG)
+// у видимой копии не резолвится, если самая первая по DOM-порядку копия
+// того же id лежит внутри скрытого (display:none) экрана — тогда иконка
+// рисуется пустой/невидимой. Поэтому на каждый вызов делаем id уникальным.
+let uidCounter = 0;
 export function categoryIcon(slug) {
-  return ICONS[slug] || ICONS.other;
+  const svg = ICONS[slug] || ICONS.other;
+  const suffix = `_${uidCounter++}`;
+  return svg
+    .replace(/\bid="(ic[A-Za-z]+)"/g, (_m, name) => `id="${name}${suffix}"`)
+    .replace(/url\(#(ic[A-Za-z]+)\)/g, (_m, name) => `url(#${name}${suffix})`);
 }

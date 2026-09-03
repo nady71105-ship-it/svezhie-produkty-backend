@@ -79,12 +79,16 @@ function showBalloon(text) {
   inner.style.transform = '';
   outer.classList.add('balloon-active');
   outer.hidden = false;
+  // Раньше шарик успевал долететь и растаять за ~5 секунд — не успевали
+  // прочитать текст. Теперь: быстро появляется, долго и почти неподвижно
+  // висит (есть время прочитать), и только потом медленно улетает вверх.
   const anim = outer.animate([
-    { bottom: '100px', opacity: 0 },
-    { bottom: '150px', opacity: 1, offset: 0.1 },
-    { bottom: '520px', opacity: 1, offset: 0.82 },
+    { bottom: '110px', opacity: 0 },
+    { bottom: '140px', opacity: 1, offset: 0.06 },
+    { bottom: '160px', opacity: 1, offset: 0.74 },
+    { bottom: '520px', opacity: 1, offset: 0.93 },
     { bottom: '620px', opacity: 0 },
-  ], { duration: 5200, easing: 'ease-in', fill: 'forwards' });
+  ], { duration: 9500, easing: 'ease-in', fill: 'forwards' });
   outer._anim = anim;
   anim.onfinish = () => {
     outer.hidden = true;
@@ -190,19 +194,27 @@ async function recordConsent(context, listingId) {
 }
 
 // ── Мини-регистрация: разовое пользовательское соглашение ──────────────
-// Показываем один раз — при первом заходе в мини-апп через Telegram
-// (без initData проверить/показать всё равно нечем). Принятие фиксируется
-// и в журнале согласий (тот же механизм, что и для create_listing /
-// contact_seller — см. consents.js), и отдельной отметкой на пользователе
-// (users.terms_accepted_at), чтобы не спрашивать заново на каждой сессии.
-async function checkTermsGate() {
-  if (!initData) return;
+// Раньше показывали это блокирующим окном сразу при запуске — Надя
+// попросила по-другому: не мешать людям просто посмотреть карту, а
+// спрашивать согласие ровно в момент первого реального действия —
+// публикации объявления или попытки написать продавцу. Поэтому это не
+// вызывается из boot(), а дожидается вызова из этих двух мест (см.
+// $('#btnPublish') и contactSeller()) через ensureTermsAccepted().
+//
+// Принятие фиксируется и в журнале согласий (тот же механизм, что и для
+// create_listing/contact_seller — см. consents.js), и отдельной отметкой
+// на пользователе (users.terms_accepted_at), чтобы не спрашивать заново.
+let termsCheckPromise = null;
+async function ensureTermsAccepted() {
+  if (!initData) return true; // вне Telegram всё равно нечем проверить/сохранить
   try {
-    const me = await api('/users/me', { auth: true });
+    if (!termsCheckPromise) termsCheckPromise = api('/users/me', { auth: true });
+    const me = await termsCheckPromise;
     state.me = me;
-    if (me.terms_accepted_at) return;
+    if (me.terms_accepted_at) return true;
   } catch (e) {
-    return; // не смогли проверить — не блокируем работу приложения
+    termsCheckPromise = null;
+    return true; // не смогли проверить — не блокируем действие пользователя
   }
 
   const overlay = $('#termsGate');
@@ -216,14 +228,19 @@ async function checkTermsGate() {
     textEl.textContent = 'Не удалось загрузить текст соглашения. Проверьте связь и попробуйте ещё раз.';
   }
 
-  $('#termsAccept').addEventListener('click', async function onAccept() {
-    $('#termsAccept').removeEventListener('click', onAccept);
-    try {
-      await api('/consents', { method: 'POST', auth: true, body: { context: 'terms_of_use' } });
-      overlay.hidden = true;
-    } catch (e) {
-      showToast('Не удалось сохранить согласие — проверьте связь и попробуйте ещё раз');
-    }
+  return new Promise((resolve) => {
+    $('#termsAccept').addEventListener('click', async function onAccept() {
+      $('#termsAccept').removeEventListener('click', onAccept);
+      try {
+        await api('/consents', { method: 'POST', auth: true, body: { context: 'terms_of_use' } });
+        overlay.hidden = true;
+        if (state.me) state.me.terms_accepted_at = new Date().toISOString();
+        resolve(true);
+      } catch (e) {
+        showToast('Не удалось сохранить согласие — проверьте связь и попробуйте ещё раз');
+        resolve(false);
+      }
+    });
   });
 }
 
@@ -333,8 +350,36 @@ function startHomeHints() {
 // примера (см. обсуждение с Надей), потом заменим на реальную агрегацию
 // по факту доставленных объявлений. ─────────────────────────────────────
 function renderHomeCounter() {
-  $('#homeCounter').innerHTML = '📦 За сезон соседям передано уже <b>≈1&nbsp;240 кг</b> и <b>≈340 л</b> свежих продуктов';
+  // Разметка и текст уже готовы в index.html — здесь только сами числа
+  // (сейчас условные, потом заменим на реальную агрегацию по сделкам).
+  $('#homeCounterKg').textContent = '≈1 240 кг';
+  $('#homeCounterL').textContent = '≈340 л';
 }
+
+// ── Рецепты и заготовки — круглая кнопка в шапке главного экрана.
+// Полноценный раздел с фото/видео — отдельная большая фича на будущее
+// (обсуждали с Надей отдельно); пока — короткие карточки-подсказки по
+// сезону и заготовкам, чтобы кнопка уже сейчас была живой и полезной.
+const RECIPE_TIPS = [
+  '🍅 Много помидоров? Прокрутите с чесноком и хреном — простая аджика без варки хранится в холодильнике до весны.',
+  '🥒 Огурцы, которые чуть переросли — отличная малосольная закуска: залейте рассолом с укропом и чесноком на сутки.',
+  '🫐 Ягоды на зиму — просто заморозьте одним слоем на подносе, а потом ссыпьте в пакет: не слипнутся.',
+  '🌿 Зелень с запасом — вымойте, обсушите, мелко нарежьте и заморозьте порционно в формочках для льда с водой.',
+  '🍯 Мёд засахарился? Это нормально — растопите баночку на водяной бане при слабом нагреве, не в микроволновке.',
+  '🥕 Морковь и свёкла хранятся дольше, если срезать ботву сразу и держать в прохладном тёмном месте.',
+];
+let recipeTipIndex = 0;
+function showRecipeTip() {
+  $('#recipesText').textContent = RECIPE_TIPS[recipeTipIndex % RECIPE_TIPS.length];
+  recipeTipIndex++;
+}
+$('#btnRecipes').addEventListener('click', () => {
+  $('#recipesDot').hidden = true;
+  showRecipeTip();
+  $('#recipesSheet').hidden = false;
+});
+$('#recipesNext').addEventListener('click', showRecipeTip);
+$('#recipesClose').addEventListener('click', () => { $('#recipesSheet').hidden = true; });
 
 $$('.segment .opt').forEach((opt) => {
   opt.addEventListener('click', () => {
@@ -359,7 +404,6 @@ function locateMe(refresh) {
   navigator.geolocation.getCurrentPosition(
     (pos) => {
       state.userLoc = { lat: pos.coords.latitude, lng: pos.coords.longitude };
-      $('#locLabel').textContent = 'Ваше местоположение';
       if (refresh) {
         loadHome();
         if (leafletMap) leafletMap.flyTo([state.userLoc.lat, state.userLoc.lng], 13, { duration: 1 });
@@ -773,6 +817,8 @@ function renderDetail(l) {
 
 async function contactSeller(listingId) {
   if (!initData) { showToast('Откройте мини-приложение через бота в Telegram'); return; }
+  const termsOk = await ensureTermsAccepted();
+  if (!termsOk) return;
   const agreed = await askConsent('contact_seller');
   if (!agreed) return;
   await recordConsent('contact_seller', listingId);
@@ -959,16 +1005,13 @@ function renderTimeChips() {
     });
     row.appendChild(chip);
   });
-  // Своё время показываем не голой меткой «Своё время», а красиво
-  // отформатированным диапазоном — тем же способом, что и в карточке.
-  if (state.create.window && state.create.window.label === 'Своё время') {
+  // Своя дата показываем не голой меткой, а красиво отформатированным
+  // диапазоном — тем же способом, что и в карточке.
+  if (state.create.window && state.create.window.label === 'Своя дата') {
     const w = state.create.window;
     const chip = el('button', 'timechip active timechip-custom', `🗓 ${formatWindow(w.start, w.end)}`);
     chip.addEventListener('click', () => {
       $('#customTimeForm').hidden = false;
-      $('#customTimeStart').value = toLocalInputValue(new Date(w.start));
-      $('#customTimeEnd').value = toLocalInputValue(new Date(w.end));
-      $('#customTimeEnd').min = $('#customTimeStart').value;
       updateCustomTimePreview();
     });
     row.appendChild(chip);
@@ -995,68 +1038,111 @@ attachAddressAutocomplete($('#destInput'), $('#destSuggest'), {
   },
 });
 
-// ── Своё время выезда (в дополнение к готовым чипам) ────────────────────
-function toLocalInputValue(d) {
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+// ── Своя дата выезда (в дополнение к готовым чипам) ──────────────────────
+// Раньше это был один комбинированный datetime-local «С»/«До» — на телефоне
+// такой инпут вводит дату и время как одну строку и легко сбивается на
+// частичном вводе (жаловались: ввели «18», а осталось только «19»). Теперь
+// дата и время — отдельные, простые поля: дата обязательна (один день или
+// период из двух дат), время — необязательное уточнение.
+function pad2(n) { return String(n).padStart(2, '0'); }
+function dateInputValue(d) { return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`; }
+function parseDateInput(v) {
+  const [y, m, d] = v.split('-').map(Number);
+  return { y, m, d };
 }
-// Красивая живая подпись диапазона под самими инпутами — раньше выбранное
-// время было видно только внутри нативного datetime-инпута (и то при
-// клике на него), теперь показываем текстом сразу.
-function formatRangePretty(start, end) {
-  const day = start.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
-  const dayEnd = end.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
-  const t = (d) => d.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' });
-  if (day === dayEnd) return `${day}, ${t(start)}–${t(end)}`;
-  return `${day} ${t(start)} – ${dayEnd} ${t(end)}`;
+function isPeriodMode() { return $('#drOptPeriod').classList.contains('active'); }
+
+function setPeriodMode(period) {
+  $('#drOptOneDay').classList.toggle('active', !period);
+  $('#drOptPeriod').classList.toggle('active', period);
+  $('#dateEndWrap').hidden = !period;
+  updateCustomTimePreview();
+}
+$('#drOptOneDay').addEventListener('click', () => setPeriodMode(false));
+$('#drOptPeriod').addEventListener('click', () => {
+  setPeriodMode(true);
+  if (!$('#customDateEnd').value) $('#customDateEnd').value = $('#customDateStart').value;
+});
+
+// Собирает {start,end} Date из полей формы, либо null, если дата ещё не
+// выбрана или диапазон некорректен. Время необязательно: если не указано,
+// берём начало/конец суток соответствующего дня.
+function buildCustomWindow() {
+  const dStartVal = $('#customDateStart').value;
+  if (!dStartVal) return null;
+  const dEndVal = isPeriodMode() ? ($('#customDateEnd').value || dStartVal) : dStartVal;
+  const { y: sy, m: sm, d: sd } = parseDateInput(dStartVal);
+  const { y: ey, m: em, d: ed } = parseDateInput(dEndVal);
+  const tStartVal = $('#customTimeStart').value;
+  const tEndVal = $('#customTimeEnd').value;
+  let start, end;
+  if (tStartVal) {
+    const [sh, smin] = tStartVal.split(':').map(Number);
+    start = new Date(sy, sm - 1, sd, sh, smin, 0);
+  } else {
+    start = new Date(sy, sm - 1, sd, 0, 0, 0);
+  }
+  if (tEndVal) {
+    const [eh, emin] = tEndVal.split(':').map(Number);
+    end = new Date(ey, em - 1, ed, eh, emin, 0);
+  } else {
+    end = new Date(ey, em - 1, ed, 23, 59, 0);
+  }
+  if (end <= start) return null;
+  return { start, end };
+}
+function formatCustomWindowLabel() {
+  const dStartVal = $('#customDateStart').value;
+  if (!dStartVal) return '';
+  const dEndVal = isPeriodMode() ? ($('#customDateEnd').value || dStartVal) : dStartVal;
+  const dfmt = (v) => {
+    const { y, m, d } = parseDateInput(v);
+    return new Date(y, m - 1, d).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+  };
+  let label = dfmt(dStartVal);
+  if (dEndVal !== dStartVal) label += `–${dfmt(dEndVal)}`;
+  const tStartVal = $('#customTimeStart').value;
+  const tEndVal = $('#customTimeEnd').value;
+  if (tStartVal && tEndVal) label += `, ${tStartVal}–${tEndVal}`;
+  else if (tStartVal) label += `, с ${tStartVal}`;
+  else if (tEndVal) label += `, до ${tEndVal}`;
+  return label;
 }
 function updateCustomTimePreview() {
-  const sVal = $('#customTimeStart').value;
-  const eVal = $('#customTimeEnd').value;
   const preview = $('#customTimePreview');
-  if (!sVal || !eVal) { preview.textContent = ''; return; }
-  preview.textContent = `🗓 ${formatRangePretty(new Date(sVal), new Date(eVal))}`;
+  const w = buildCustomWindow();
+  preview.textContent = w ? `🗓 ${formatCustomWindowLabel()}` : '';
 }
 
 $('#btnCustomTime').addEventListener('click', () => {
   const form = $('#customTimeForm');
   form.hidden = !form.hidden;
-  if (!form.hidden && !$('#customTimeStart').value) {
-    const now = new Date();
-    const start = new Date(now.getTime() + 60 * 60 * 1000);
-    const end = new Date(now.getTime() + 4 * 60 * 60 * 1000);
-    $('#customTimeStart').value = toLocalInputValue(start);
-    $('#customTimeEnd').value = toLocalInputValue(end);
-    $('#customTimeEnd').min = $('#customTimeStart').value;
+  if (!form.hidden && !$('#customDateStart').value) {
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    $('#customDateStart').value = dateInputValue(tomorrow);
+    setPeriodMode(false);
     updateCustomTimePreview();
   }
 });
-// Поле «До» не должно позволять выбрать время раньше, чем в «С» — и если
-// сдвигаем «С» вперёд, «До» подтягивается следом, а не остаётся в прошлом.
-$('#customTimeStart').addEventListener('input', () => {
-  const sVal = $('#customTimeStart').value;
-  if (!sVal) return;
-  $('#customTimeEnd').min = sVal;
-  const start = new Date(sVal);
-  const eVal = $('#customTimeEnd').value;
-  if (!eVal || new Date(eVal) <= start) {
-    $('#customTimeEnd').value = toLocalInputValue(new Date(start.getTime() + 3 * 60 * 60 * 1000));
-  }
-  updateCustomTimePreview();
+// И input, и change — на мобильных вебвью нативные date/time-пикеры не
+// всегда стабильно шлют input, надёжнее слушать оба события.
+$$('#customTimeForm input').forEach((inp) => {
+  inp.addEventListener('input', updateCustomTimePreview);
+  inp.addEventListener('change', updateCustomTimePreview);
 });
-$('#customTimeEnd').addEventListener('input', updateCustomTimePreview);
 
 $('#btnCustomTimeApply').addEventListener('click', () => {
-  const sVal = $('#customTimeStart').value;
-  const eVal = $('#customTimeEnd').value;
-  if (!sVal || !eVal) { showToast('Укажите обе даты'); return; }
-  const start = new Date(sVal), end = new Date(eVal);
-  if (end <= start) { showToast('Время «до» должно быть позже времени «с»'); return; }
-  state.create.window = { label: 'Своё время', start: start.toISOString(), end: end.toISOString() };
+  const w = buildCustomWindow();
+  if (!w) {
+    showToast($('#customDateStart').value ? 'Дата/время указаны некорректно — «по» должно быть позже «с»' : 'Укажите дату');
+    return;
+  }
+  state.create.window = { label: 'Своя дата', start: w.start.toISOString(), end: w.end.toISOString() };
   markInvalid($('#timeSection'), false);
   renderTimeChips();
   $('#customTimeForm').hidden = true;
-  showToast('Время выезда указано');
+  showToast('Дата выезда указана');
 });
 
 // ── Фото урожая (необязательно) ──────────────────────────────────────
@@ -1118,9 +1204,12 @@ function resetCreateForm() {
   $('#photoPreviewWrap').hidden = true;
   $('#btnPickPhoto').hidden = false;
   $('#customTimeForm').hidden = true;
+  $('#customDateStart').value = '';
+  $('#customDateEnd').value = '';
   $('#customTimeStart').value = '';
   $('#customTimeEnd').value = '';
   $('#customTimePreview').textContent = '';
+  setPeriodMode(false);
   $('#fGiveaway').checked = false;
   $('#priceRow').hidden = false;
   $('#giveawayPhrases').hidden = true;
@@ -1155,10 +1244,10 @@ $('#btnPublish').addEventListener('click', async () => {
   if (!giveaway && !(price > 0)) { missing.push('цену (или отметьте «Отдам даром»)'); markInvalid($('#fPrice')); }
   if (!origin) { missing.push('точку «откуда»'); markInvalid($('#originInput')); }
   if (!dest) { missing.push('точку «куда»'); markInvalid($('#destInput')); }
-  if (!win) { missing.push('время выезда'); markInvalid($('#timeSection')); }
+  if (!win) { missing.push('дату выезда'); markInvalid($('#timeSection')); }
 
   if (missing.length || !category) {
-    const msg = category ? `Заполните: ${missing.join(', ')}` : 'Заполните название, цену, обе точки на маршруте и время выезда';
+    const msg = category ? `Заполните: ${missing.join(', ')}` : 'Заполните название, цену, обе точки на маршруте и дату выезда';
     errEl.textContent = msg;
     errEl.hidden = false;
     showBalloon(missing.length === 1 ? `Не хватает: ${missing[0]}` : msg);
@@ -1174,6 +1263,8 @@ $('#btnPublish').addEventListener('click', async () => {
     return;
   }
 
+  const termsOk = await ensureTermsAccepted();
+  if (!termsOk) return;
   const agreed = await askConsent('create_listing');
   if (!agreed) return;
 
@@ -1322,7 +1413,10 @@ function renderProfile(me, mine) {
       <div class="switch${me.broadcast_opt_in ? ' on' : ''}" id="swBroadcast"></div>
     </div>
 
-    <div class="label">Мои объявления</div>
+    <div class="label">💬 Чаты</div>
+    <div class="chats-note">Переписка с покупателями и продавцами идёт прямо в Telegram — откройте карточку товара и нажмите «Написать продавцу», чат откроется в обычном Telegram-чате.</div>
+
+    <div class="label">📦 Мои продажи</div>
     <div id="myListings" style="display:flex;flex-direction:column;gap:9px;"></div>
   `;
 
@@ -1413,12 +1507,12 @@ async function boot() {
   renderFilterRow();
   renderHomeCounter();
   startHomeHints();
+  $('#recipesDot').hidden = false;
   locateMe(false);
   await loadHome();
 
   $('#splash').style.display = 'none';
   $('#app').hidden = false;
-  checkTermsGate();
 
   // Карту создаём только теперь: пока #app скрыт (display:none), контейнер
   // имеет нулевой размер, и Leaflet посчитал бы себя нерабочим 0×0.
