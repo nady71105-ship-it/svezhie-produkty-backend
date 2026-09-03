@@ -278,10 +278,13 @@ function initMap() {
   // так и работают любые тайловые карты, но именно так и просила Надя.
   leafletMap = L.map('leafletMap', { zoomControl: false }).setView(MOSCOW_CENTER, 9);
   L.control.zoom({ position: 'bottomright' }).addTo(leafletMap);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+  // CARTO's voyager-стиль теперь требует свой API-ключ (без него тайлы
+  // приходят с водяным знаком «API KEY REQUIRED») — возвращаемся на
+  // обычные тайлы OpenStreetMap, они бесплатны и не требуют ключа.
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
-    subdomains: 'abcd',
-    attribution: '© OpenStreetMap, © CARTO',
+    subdomains: 'abc',
+    attribution: '© OpenStreetMap',
   }).addTo(leafletMap);
   // Убираем фирменную приписку «Leaflet» из подвала карты — оставляем
   // только обязательную атрибуцию OSM/CARTO, без ссылки на leafletjs.com.
