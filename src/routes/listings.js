@@ -5,9 +5,21 @@ import { requireTelegramAuth } from '../middleware/auth.js';
 export const listingsRouter = Router();
 
 // ── Создать объявление ────────────────────────────────────────────────
+// data:image/jpeg;base64,... — клиент сам сжимает фото перед отправкой
+// (см. app.js), но на всякий случай ограничиваем ещё раз и на сервере.
+const PHOTO_MAX_BYTES = 3 * 1024 * 1024;
+function parsePhotoDataUrl(dataUrl) {
+  if (!dataUrl) return null;
+  const m = /^data:(image\/(?:jpeg|png|webp));base64,(.+)$/.exec(dataUrl);
+  if (!m) return null;
+  const buffer = Buffer.from(m[2], 'base64');
+  if (buffer.length > PHOTO_MAX_BYTES) return null;
+  return { mime: m[1], buffer };
+}
+
 listingsRouter.post('/', requireTelegramAuth, async (req, res) => {
   const {
-    category_slug, title, description, photo_file_id,
+    category_slug, title, description, photo_file_id, photo_data_url,
     price, unit,
     origin: { lat: originLat, lng: originLng } = {},
     dest: { lat: destLat, lng: destLng } = {},
@@ -19,17 +31,24 @@ listingsRouter.post('/', requireTelegramAuth, async (req, res) => {
     return res.status(400).json({ error: 'не хватает обязательных полей' });
   }
 
+  let photo = null;
+  if (photo_data_url) {
+    photo = parsePhotoDataUrl(photo_data_url);
+    if (!photo) return res.status(400).json({ error: 'фото слишком большое или в неподдерживаемом формате' });
+  }
+
   const { rows } = await pool.query(
     `insert into listings
-       (seller_id, category_slug, title, description, photo_file_id, price, unit,
+       (seller_id, category_slug, title, description, photo_file_id, photo_data, photo_mime, price, unit,
         origin_point, dest_point, dest_radius_m, window_start, window_end)
      values
-       ($1, $2, $3, $4, $5, $6, $7,
-        ST_SetSRID(ST_MakePoint($8, $9), 4326)::geography,
+       ($1, $2, $3, $4, $5, $6, $7, $8, $9,
         ST_SetSRID(ST_MakePoint($10, $11), 4326)::geography,
-        $12, $13, $14)
+        ST_SetSRID(ST_MakePoint($12, $13), 4326)::geography,
+        $14, $15, $16)
      returning id, created_at`,
-    [req.user.id, category_slug, title, description || null, photo_file_id || null, price, unit,
+    [req.user.id, category_slug, title, description || null, photo_file_id || null,
+     photo ? photo.buffer : null, photo ? photo.mime : null, price, unit,
      originLng, originLat, destLng, destLat, dest_radius_m, window_start, window_end]
   );
 
@@ -103,6 +122,20 @@ listingsRouter.get('/', async (req, res) => {
   );
 
   res.json(rows);
+});
+
+// ── Фото объявления (если продавец его приложил) ────────────────────────
+// Публично, без авторизации — как обычная картинка: <img src="/listings/:id/photo">.
+// Кэшируем на клиенте подольше — фото объявления не меняется после публикации.
+listingsRouter.get('/:id/photo', async (req, res) => {
+  const { rows } = await pool.query(
+    `select photo_data, photo_mime from listings where id = $1`,
+    [req.params.id]
+  );
+  if (!rows.length || !rows[0].photo_data) return res.status(404).end();
+  res.set('Content-Type', rows[0].photo_mime || 'image/jpeg');
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.send(rows[0].photo_data);
 });
 
 // ── Архивировать своё объявление вручную ────────────────────────────────

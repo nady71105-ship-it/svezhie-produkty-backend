@@ -27,3 +27,49 @@ analyticsRouter.get('/summary', requireAdmin, async (_req, res) => {
                       autoArchivedThisWeek: Number(autoArchived.rows[0].count),
                     });
 });
+
+// ── Журнал согласий (152-ФЗ и общая защита) ──────────────────────────────
+// Список для дашборда — последние записи с именем/username, кто на что
+// согласился и когда. Полный текст согласия в списке не отдаём (длинный,
+// не нужен для обзора) — он есть в CSV-выгрузке ниже.
+analyticsRouter.get('/consents', requireAdmin, async (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 100, 500);
+  const { rows } = await pool.query(
+    `select c.id, c.telegram_id, u.first_name, u.username, c.context, c.listing_id,
+            c.consent_version, c.ip_address, c.created_at
+     from consents c
+     left join users u on u.id = c.user_id
+     order by c.created_at desc
+     limit $1`,
+    [limit]
+  );
+  res.json(rows);
+});
+
+function csvCell(v) {
+  const s = v === null || v === undefined ? '' : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// ── Выгрузка журнала согласий в CSV ──────────────────────────────────────
+// Полная запись, включая точный текст, который видел человек, и IP/User-
+// Agent — то самое «доказательство», о котором просила Надин.
+analyticsRouter.get('/consents/export', requireAdmin, async (_req, res) => {
+  const { rows } = await pool.query(
+    `select c.id, c.telegram_id, u.first_name, u.username, c.context, c.listing_id,
+            c.consent_version, c.consent_text, c.ip_address, c.user_agent, c.created_at
+     from consents c
+     left join users u on u.id = c.user_id
+     order by c.created_at desc`
+  );
+  const header = ['id', 'telegram_id', 'first_name', 'username', 'context', 'listing_id',
+    'consent_version', 'consent_text', 'ip_address', 'user_agent', 'created_at'];
+  const lines = [header.join(',')];
+  for (const r of rows) {
+    lines.push(header.map((k) => csvCell(r[k])).join(','));
+  }
+  const csv = '﻿' + lines.join('\r\n'); // BOM — чтобы Excel сразу понял UTF-8
+  res.set('Content-Type', 'text/csv; charset=utf-8');
+  res.set('Content-Disposition', `attachment; filename="consents-${new Date().toISOString().slice(0, 10)}.csv"`);
+  res.send(csv);
+});
