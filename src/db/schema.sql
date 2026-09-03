@@ -14,8 +14,11 @@ create table if not exists users (
   rating             numeric(2,1) not null default 0,
   deals_count        integer not null default 0,
   broadcast_opt_in   boolean not null default false,
+  terms_accepted_at  timestamptz,
   created_at         timestamptz not null default now()
   );
+
+alter table users add column if not exists terms_accepted_at timestamptz;
 
 create table if not exists categories (
   slug   text primary key,
